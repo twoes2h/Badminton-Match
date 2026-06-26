@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>管理 · 羽毛球匹配</title>
+    <link rel="stylesheet" href="/mobile.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="topline">
+          <div>
+            <h1>管理</h1>
+            <p class="subtitle">房间、用户和黑名单</p>
+          </div>
+          <div id="userAction"></div>
+        </div>
+      </header>
+
+      <section id="message" class="message"></section>
+
+      <section class="stack">
+        <div class="segmented">
+          <input id="adminRoomsActive" type="radio" name="roomStatusFilter" value="active" checked>
+          <label for="adminRoomsActive">当前房间</label>
+          <input id="adminRoomsDissolved" type="radio" name="roomStatusFilter" value="dissolved">
+          <label for="adminRoomsDissolved">已解散</label>
+        </div>
+        <button id="refreshAdminBtn" type="button">刷新管理数据</button>
+        <section class="card">
+          <div class="card-title">
+            <h2>房间</h2>
+          </div>
+          <div id="adminRooms" class="list"></div>
+        </section>
+        <section class="card">
+          <div class="card-title">
+            <h2>用户</h2>
+          </div>
+          <div id="adminUsers" class="list"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/common.js"></script>
+    <script src="/admin.js"></script>
+  </body>
+</html>

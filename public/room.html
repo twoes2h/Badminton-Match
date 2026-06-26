@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>比赛 · 羽毛球匹配</title>
+    <link rel="stylesheet" href="/mobile.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="topline">
+          <div>
+            <h1 id="roomTitle">比赛</h1>
+            <p id="roomMeta" class="subtitle">加载中...</p>
+          </div>
+          <div id="userAction"></div>
+        </div>
+      </header>
+
+      <section id="message" class="message"></section>
+
+      <section class="stack">
+        <nav class="tabs">
+          <button type="button" class="active" data-tab="matchPanel">匹配</button>
+          <button type="button" data-tab="membersPanel">成员</button>
+          <button type="button" data-tab="matchesPanel">比赛</button>
+        </nav>
+
+        <section id="matchPanel" class="tab-panel active">
+          <form id="stateForm" class="card stack">
+            <div class="card-title">
+              <h2>我的状态</h2>
+            </div>
+            <div class="segmented">
+              <input id="stateIdle" type="radio" name="playStatus" value="idle">
+              <label for="stateIdle">空闲</label>
+              <input id="stateWaiting" type="radio" name="playStatus" value="waiting">
+              <label for="stateWaiting">等待</label>
+              <input id="stateResting" type="radio" name="playStatus" value="resting">
+              <label for="stateResting">休息</label>
+              <input id="stateBusy" type="radio" name="playStatus" value="busy">
+              <label for="stateBusy">忙碌</label>
+            </div>
+            <div>
+              <p class="meta">匹配偏好，可多选</p>
+              <div id="preferenceChecks" class="check-grid"></div>
+            </div>
+            <button type="submit">保存状态</button>
+          </form>
+
+          <form id="freeMatchForm" class="card stack" data-mode-panel="free">
+            <div class="card-title">
+              <h2>自由匹配</h2>
+            </div>
+            <label>
+              本次匹配方式
+              <select name="matchType" id="freeMatchType"></select>
+            </label>
+            <button type="submit">发起匹配</button>
+          </form>
+
+          <form id="roundMatchForm" class="card stack" data-mode-panel="round">
+            <div class="card-title">
+              <h2>固定场次</h2>
+            </div>
+            <div id="courtModes" class="grid"></div>
+            <button type="submit">发起本轮</button>
+          </form>
+
+          <button id="leaveRoomBtn" type="button" class="secondary">离开房间</button>
+          <button id="dissolveRoomBtn" type="button" class="danger hide">解散房间</button>
+        </section>
+
+        <section id="membersPanel" class="tab-panel">
+          <div class="card">
+            <div class="card-title">
+              <h2>成员</h2>
+              <span id="memberCount" class="pill"></span>
+            </div>
+            <div id="memberList" class="list"></div>
+          </div>
+        </section>
+
+        <section id="matchesPanel" class="tab-panel">
+          <div class="card">
+            <div class="card-title">
+              <h2>比赛</h2>
+              <button id="refreshRoomBtn" type="button" class="secondary">刷新</button>
+            </div>
+            <div id="matchList" class="list"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/common.js"></script>
+    <script src="/room.js"></script>
+  </body>
+</html>
