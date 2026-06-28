@@ -9,6 +9,7 @@ const { emitRoomChanged } = require('../realtime');
 const router = express.Router();
 const MEMBER_STATUSES = new Set(['idle', 'waiting', 'resting', 'busy']);
 const MATCH_PREFS = new Set(['md', 'wd', 'xd', 'ms', 'ws', 'xs', 'any']);
+const MATCH_TYPE_ORDER = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 
 function normalizeMatchPreferences(value) {
   const values = Array.isArray(value)
@@ -32,6 +33,22 @@ function preferencesToDb(value) {
 
 function legacyPreference(value) {
   return normalizeMatchPreferences(value)[0] || 'any';
+}
+
+function normalizeMatchTypes(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  const cleaned = [...new Set(values.map((item) => String(item).trim()).filter(Boolean))]
+    .filter((item) => item === 'any' || MATCH_TYPES[item]);
+
+  if (cleaned.includes('any')) {
+    return MATCH_TYPE_ORDER;
+  }
+
+  return cleaned.filter((item) => MATCH_TYPES[item]);
 }
 
 function makeRoomCode() {
@@ -409,8 +426,8 @@ router.patch('/:roomId/my-state', requireAuth, asyncRoute(async (req, res) => {
 
 router.post('/:roomId/match/free', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
-  const matchType = req.body.matchType;
-  if (!MATCH_TYPES[matchType]) {
+  const matchTypes = normalizeMatchTypes(req.body.matchTypes ?? req.body.matchType);
+  if (matchTypes.length === 0) {
     return res.status(400).json({ error: '不支持的匹配方式' });
   }
   await transaction(async (conn) => {
@@ -420,7 +437,7 @@ router.post('/:roomId/match/free', requireAuth, asyncRoute(async (req, res) => {
     }
     await assertMember(conn, roomId, req.session.user.id);
   });
-  const match = await createFreeMatch({ roomId, matchType, createdBy: req.session.user.id });
+  const match = await createFreeMatch({ roomId, matchType: matchTypes, createdBy: req.session.user.id });
   await emitRoomChanged(req.app.get('io'), roomId);
   res.status(201).json({ match });
 }));

@@ -28,6 +28,11 @@ async function loadAdminData() {
 
 function renderRooms(rooms) {
   const roomStatus = $('[name="roomStatusFilter"]:checked').value;
+  if (roomStatus === 'dissolved') {
+    renderDissolvedRooms(rooms);
+    return;
+  }
+
   $('#adminRooms').innerHTML = rooms.length
     ? rooms.map((room) => `
       <article class="item">
@@ -63,6 +68,66 @@ function renderRooms(rooms) {
   });
   $$('[data-dissolve-room]').forEach((button) => {
     button.addEventListener('click', () => dissolveRoom(button.dataset.dissolveRoom));
+  });
+}
+
+function renderDissolvedRooms(rooms) {
+  if (!rooms.length) {
+    $('#adminRooms').innerHTML = '<p class="muted">暂无已解散房间。</p>';
+    return;
+  }
+
+  const groups = rooms.reduce((map, room) => {
+    const key = monthKey(room.updated_at || room.created_at);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(room);
+    return map;
+  }, new Map());
+
+  $('#adminRooms').innerHTML = [...groups.entries()].map(([month, monthRooms]) => `
+    <details class="month-group">
+      <summary>${month} · ${monthRooms.length} 个房间</summary>
+      <div class="list">
+        ${monthRooms.map(renderDissolvedRoom).join('')}
+      </div>
+    </details>
+  `).join('');
+}
+
+function renderDissolvedRoom(room) {
+  return `
+    <article class="item">
+      <div class="item-head">
+        <div>
+          <strong>${escapeHtml(room.name)}</strong>
+          <p class="meta">${escapeHtml(room.code)} · ${room.mode === 'round' ? '固定场次' : '自由匹配'}</p>
+        </div>
+        <span class="pill">已解散</span>
+      </div>
+      <p class="meta">${room.court_count} 个场地 · 上限 ${room.max_people} 人 · 成员 ${room.member_count || 0} 人</p>
+      <p class="meta">创建：${formatDateTime(room.created_at)}</p>
+      <p class="meta">解散：${formatDateTime(room.updated_at)}</p>
+    </article>
+  `;
+}
+
+function monthKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知月份';
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${date.getFullYear()}年${month}月`;
+}
+
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
   });
 }
 

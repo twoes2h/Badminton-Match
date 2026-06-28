@@ -235,6 +235,25 @@ h3 {
   gap: 10px;
 }
 
+.month-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.month-group summary {
+  min-height: 46px;
+  padding: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.month-group .list {
+  padding: 0 10px 10px;
+}
+
 .item {
   display: grid;
   gap: 8px;

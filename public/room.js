@@ -1,4 +1,5 @@
 const roomId = Number(queryParam('id'));
+const MATCH_CHECK_KEYS = ['any', 'md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 let pageUser = null;
 let roomPayload = null;
 let socket = null;
@@ -62,7 +63,7 @@ function renderRoom(payload) {
 
   renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any');
   renderStatus(member);
-  renderMatchSelect($('#freeMatchType'));
+  renderFreeMatchChecks();
   renderCourtModes(room.court_count);
   renderMembers(members);
   renderMatches(matches);
@@ -82,14 +83,37 @@ function renderStatus(member) {
 
 function renderPreferenceChecks(raw) {
   const selected = new Set(matchPreferenceValues(raw));
-  const keys = ['any', 'md', 'wd', 'xd', 'ms', 'ws', 'xs'];
-  $('#preferenceChecks').innerHTML = keys.map((key) => `
-    <input id="pref-${key}" type="checkbox" name="matchPreferences" value="${key}" ${selected.has(key) ? 'checked' : ''}>
-    <label for="pref-${key}">${MatchLabels[key]}</label>
+  renderCheckGroup($('#preferenceChecks'), {
+    keys: MATCH_CHECK_KEYS,
+    name: 'matchPreferences',
+    prefix: 'pref',
+    selected
+  });
+}
+
+function renderFreeMatchChecks() {
+  const current = selectedFreeMatchTypes(false);
+  renderCheckGroup($('#freeMatchChecks'), {
+    keys: MATCH_CHECK_KEYS,
+    name: 'freeMatchTypes',
+    prefix: 'free',
+    selected: new Set(current.length ? current : ['any'])
+  });
+}
+
+function renderCheckGroup(container, { keys, name, prefix, selected }) {
+  container.innerHTML = keys.map((key) => `
+    <input id="${prefix}-${key}" type="checkbox" name="${name}" value="${key}" ${selected.has(key) ? 'checked' : ''}>
+    <label for="${prefix}-${key}">${MatchLabels[key]}</label>
   `).join('');
 
-  const any = $('#pref-any');
-  const others = keys.filter((key) => key !== 'any').map((key) => $(`#pref-${key}`));
+  bindAnyCheckGroup(name, `${prefix}-any`);
+}
+
+function bindAnyCheckGroup(name, anyId) {
+  const any = $(`#${anyId}`);
+  const others = $$(`[name="${name}"]`).filter((checkbox) => checkbox.value !== 'any');
+
   any.addEventListener('change', () => {
     if (any.checked) others.forEach((checkbox) => { checkbox.checked = false; });
   });
@@ -101,16 +125,18 @@ function renderPreferenceChecks(raw) {
   });
 }
 
+function checkedValues(name) {
+  return $$(`[name="${name}"]:checked`).map((input) => input.value);
+}
+
 function selectedPreferences() {
-  const values = $$('[name="matchPreferences"]:checked').map((input) => input.value);
+  const values = checkedValues('matchPreferences');
   return values.length ? values : ['any'];
 }
 
-function renderMatchSelect(select) {
-  const current = select.value;
-  const keys = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
-  select.innerHTML = keys.map((key) => `<option value="${key}">${MatchLabels[key]}</option>`).join('');
-  if (keys.includes(current)) select.value = current;
+function selectedFreeMatchTypes(withDefault = true) {
+  const values = checkedValues('freeMatchTypes');
+  return values.length || !withDefault ? values : ['any'];
 }
 
 function renderCourtModes(count) {
@@ -282,10 +308,11 @@ async function saveState(event) {
 async function createFreeMatch(event) {
   event.preventDefault();
   try {
-    await api(`/api/rooms/${roomId}/match/free`, {
+    const data = await api(`/api/rooms/${roomId}/match/free`, {
       method: 'POST',
-      body: formObject(event.currentTarget)
+      body: { matchTypes: selectedFreeMatchTypes() }
     });
+    showMessage(`已创建 ${MatchLabels[data.match.matchType] || '比赛'} 匹配`);
     await loadRoom();
     $('[data-tab="matchesPanel"]').click();
   } catch (error) {

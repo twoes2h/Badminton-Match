@@ -356,16 +356,26 @@ async function createMatch(conn, { roomId, matchType, teams, createdBy, courtNo 
 async function createFreeMatch({ roomId, matchType, createdBy }) {
   return transaction(async (conn) => {
     await assertRoomActive(conn, roomId);
-    const best = await selectBestMatch(conn, roomId, matchType);
-    if (!best) {
-      throw new Error(`当前房间没有足够适合 ${MATCH_TYPES[matchType].label} 的空闲成员`);
+    const matchTypes = Array.isArray(matchType) ? matchType : [matchType];
+    const validTypes = [...new Set(matchTypes)].filter((type) => MATCH_TYPES[type]);
+    if (validTypes.length === 0) {
+      throw new Error('请至少选择一个匹配方式');
     }
-    return createMatch(conn, {
-      roomId,
-      matchType,
-      teams: best,
-      createdBy
-    });
+
+    for (const type of validTypes) {
+      const best = await selectBestMatch(conn, roomId, type);
+      if (best) {
+        return createMatch(conn, {
+          roomId,
+          matchType: type,
+          teams: best,
+          createdBy
+        });
+      }
+    }
+
+    const labels = validTypes.map((type) => MATCH_TYPES[type].label).join('、');
+    throw new Error(`当前房间没有足够适合 ${labels} 的空闲成员`);
   });
 }
 

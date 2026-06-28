@@ -80,6 +80,9 @@ router.patch('/users/:userId', asyncRoute(async (req, res) => {
 
 router.get('/rooms', asyncRoute(async (req, res) => {
   const status = ['active', 'dissolved'].includes(req.query.status) ? req.query.status : 'active';
+  const orderBy = status === 'dissolved'
+    ? 'r.updated_at DESC, r.created_at DESC'
+    : 'r.created_at DESC';
   const rooms = await query(
     `SELECT
        r.*,
@@ -89,7 +92,7 @@ router.get('/rooms', asyncRoute(async (req, res) => {
      LEFT JOIN room_members rm ON rm.room_id = r.id
      WHERE r.status = ?
      GROUP BY r.id
-     ORDER BY r.created_at DESC
+     ORDER BY ${orderBy}
      LIMIT 200`,
     [status]
   );
