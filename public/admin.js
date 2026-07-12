@@ -1,4 +1,5 @@
 let adminUser = null;
+let adminUsers = [];
 
 (async () => {
   adminUser = await requireUser({ admin: true });
@@ -9,6 +10,9 @@ let adminUser = null;
   $$('[name="roomStatusFilter"]').forEach((input) => {
     input.addEventListener('change', loadAdminData);
   });
+  $('#userSearchInput').addEventListener('input', renderFilteredUsers);
+  $('#userGenderFilter').addEventListener('change', renderFilteredUsers);
+  $('#userLevelFilter').addEventListener('change', renderFilteredUsers);
   await loadAdminData();
 })();
 
@@ -20,7 +24,8 @@ async function loadAdminData() {
       api('/api/admin/users')
     ]);
     renderRooms(roomData.rooms);
-    renderUsers(userData.users);
+    adminUsers = userData.users;
+    renderFilteredUsers();
   } catch (error) {
     showMessage(error.message);
   }
@@ -131,27 +136,66 @@ function formatDateTime(value) {
   });
 }
 
+function renderFilteredUsers() {
+  renderUsers(filterUsers(adminUsers));
+}
+
+function filterUsers(users) {
+  const keyword = $('#userSearchInput').value.trim().toLowerCase();
+  const gender = $('#userGenderFilter').value;
+  const levelRange = $('#userLevelFilter').value;
+
+  return users.filter((user) => {
+    const text = `${user.display_name || ''} ${user.username || ''}`.toLowerCase();
+    if (keyword && !text.includes(keyword)) return false;
+    if (gender !== 'all' && user.gender !== gender) return false;
+    if (levelRange !== 'all') {
+      const [min, max] = levelRange.split('-').map(Number);
+      const level = Number(user.skill_level || 0);
+      if (level < min || level > max) return false;
+    }
+    return true;
+  });
+}
+
 function renderUsers(users) {
   $('#adminUsers').innerHTML = users.length
-    ? users.map((user) => `
-      <article class="item">
-        <div class="item-head">
-          <div>
-            <strong>${escapeHtml(user.display_name)}</strong>
-            <p class="meta">${escapeHtml(user.username)} · ${user.role} · ${user.rating} 分</p>
-          </div>
-          <span class="pill ${user.is_blacklisted ? 'locked' : ''}">${user.is_blacklisted ? '已拉黑' : '正常'}</span>
-        </div>
-        <button type="button" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
-          ${user.is_blacklisted ? '解除拉黑' : '拉黑用户'}
-        </button>
-      </article>
-    `).join('')
-    : '<p class="muted">暂无用户。</p>';
+    ? users.map(renderUserCard).join('')
+    : '<p class="muted">暂无符合条件的用户。</p>';
 
   $$('[data-blacklist]').forEach((button) => {
     button.addEventListener('click', () => setBlacklist(button.dataset.blacklist, button.dataset.value === '1'));
   });
+}
+
+function renderUserCard(user) {
+  const tags = [
+    user.role === 'admin' ? '管理员' : '',
+    user.account_type === 'temporary' ? '临时' : '',
+    user.is_blacklisted ? '已拉黑' : ''
+  ].filter(Boolean);
+
+  return `
+    <article class="user-card ${user.is_blacklisted ? 'is-locked' : ''}">
+      <div class="avatar ${user.gender || 'other'}">${avatarText(user.display_name || user.username)}</div>
+      <strong>${escapeHtml(user.display_name)}</strong>
+      <p class="meta">${escapeHtml(user.username)}</p>
+      <div class="user-card-meta">
+        <span>${GenderLabels[user.gender] || '其他'}</span>
+        <span>Lv.${user.skill_level}</span>
+        <span>${user.rating}分</span>
+      </div>
+      ${tags.length ? `<p class="meta">${tags.join(' · ')}</p>` : '<p class="meta">正常</p>'}
+      <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
+        ${user.is_blacklisted ? '解除' : '拉黑'}
+      </button>
+    </article>
+  `;
+}
+
+function avatarText(value) {
+  const text = String(value || '?').trim();
+  return escapeHtml([...text][0] || '?');
 }
 
 async function saveRoom(roomId) {

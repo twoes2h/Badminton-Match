@@ -232,6 +232,10 @@ function renderMatches(matches) {
   });
   $$('.result-form').forEach((form) => {
     form.addEventListener('submit', submitResult);
+    $$('[name="resultMode"]', form).forEach((input) => {
+      input.addEventListener('change', () => updateResultScoreFields(form));
+    });
+    updateResultScoreFields(form);
   });
 }
 
@@ -292,30 +296,45 @@ function playerLine(player) {
 }
 
 function resultForm(matchId, options = {}) {
-  const resultSelect = options.authority
-    ? `<select name="verdict">
-        <option value="">按比分</option>
-        <option value="red">红方胜</option>
-        <option value="blue">蓝方胜</option>
-        <option value="draw">平</option>
-        <option value="terminated">终止</option>
-      </select>`
-    : `<select name="outcome">
-        <option value="">按比分</option>
-        <option value="win">赢</option>
-        <option value="lose">输</option>
-        <option value="draw">平</option>
-        <option value="terminated">终止</option>
-      </select>`;
+  const idPrefix = `result-${matchId}-${options.authority ? 'authority' : 'player'}`;
+  const optionsHtml = options.authority
+    ? [
+      ['score', '比分'],
+      ['red', '红方'],
+      ['blue', '蓝方'],
+      ['draw', '平'],
+      ['terminated', '终止']
+    ]
+    : [
+      ['score', '比分'],
+      ['win', '赢'],
+      ['lose', '输'],
+      ['draw', '平'],
+      ['terminated', '终止']
+    ];
 
   return `
-    <form class="result-form" data-result-match="${matchId}">
-      ${resultSelect}
-      <input name="scoreRed" type="number" min="0" placeholder="红">
-      <input name="scoreBlue" type="number" min="0" placeholder="蓝">
+    <form class="result-form" data-result-match="${matchId}" data-authority="${options.authority ? '1' : '0'}">
+      <div class="segmented result-choice">
+        ${optionsHtml.map(([value, label], index) => `
+          <input id="${idPrefix}-${value}" type="radio" name="resultMode" value="${value}" ${index === 0 ? 'checked' : ''}>
+          <label for="${idPrefix}-${value}">${label}</label>
+        `).join('')}
+      </div>
+      <div class="result-score-fields" data-score-fields>
+        <input name="scoreRed" type="number" min="0" value="21" aria-label="红方比分">
+        <input name="scoreBlue" type="number" min="0" value="21" aria-label="蓝方比分">
+      </div>
       <button type="submit">提交结果</button>
     </form>
   `;
+}
+
+function updateResultScoreFields(form) {
+  const mode = $('[name="resultMode"]:checked', form);
+  const fields = $('[data-score-fields]', form);
+  if (!mode || !fields) return;
+  fields.classList.toggle('hide', mode.value !== 'score');
 }
 
 function winnerLabel(winner) {
@@ -400,16 +419,22 @@ async function leaveMatch(matchId) {
 async function submitResult(event) {
   event.preventDefault();
   const matchId = event.currentTarget.dataset.resultMatch;
-  const data = formObject(event.currentTarget);
+  const form = event.currentTarget;
+  const data = formObject(form);
+  const resultMode = data.resultMode || 'score';
+  const body = {};
+  if (resultMode === 'score') {
+    body.scoreRed = data.scoreRed;
+    body.scoreBlue = data.scoreBlue;
+  } else if (form.dataset.authority === '1') {
+    body.verdict = resultMode;
+  } else {
+    body.outcome = resultMode;
+  }
   try {
     const result = await api(`/api/rooms/matches/${matchId}/results`, {
       method: 'POST',
-      body: {
-        outcome: data.outcome || null,
-        verdict: data.verdict || null,
-        scoreRed: data.scoreRed,
-        scoreBlue: data.scoreBlue
-      }
+      body
     });
     showMessage(result.finalized ? '比赛已结算' : `已提交，等待 ${result.needed - result.submitted} 人`);
     await loadRoom();

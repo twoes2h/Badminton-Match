@@ -235,6 +235,78 @@ h3 {
   gap: 10px;
 }
 
+.user-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.user-card {
+  min-height: 176px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+  text-align: center;
+}
+
+.user-card.is-locked {
+  background: #fff8f7;
+  border-color: #edc8c3;
+}
+
+.user-card strong,
+.user-card .meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-card button {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.user-card-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.avatar {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 2px;
+  border-radius: 8px;
+  background: #e5edf9;
+  color: var(--blue);
+  font-weight: 800;
+  font-size: 20px;
+}
+
+.avatar.male {
+  background: #e5edf9;
+  color: var(--blue);
+}
+
+.avatar.female {
+  background: #f7e6ee;
+  color: #a23a67;
+}
+
+.avatar.other {
+  background: var(--surface-soft);
+  color: var(--brand-dark);
+}
+
 .month-group {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -389,12 +461,24 @@ small {
 
 .result-form {
   display: grid;
-  grid-template-columns: 1fr 74px 74px;
   gap: 8px;
+  width: 100%;
 }
 
-.result-form button {
-  grid-column: 1 / -1;
+.result-choice {
+  width: 100%;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.result-choice label {
+  min-height: 38px;
+  font-size: 12px;
+}
+
+.result-score-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .hide {

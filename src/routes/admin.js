@@ -32,7 +32,7 @@ router.get('/users', asyncRoute(async (req, res) => {
   const users = await query(
     `SELECT
        id, username, display_name, gender, birth_year, rating, skill_level,
-       role, is_blacklisted, matches_played, last_seen_at, created_at
+       role, account_type, is_blacklisted, matches_played, last_seen_at, created_at
      FROM users
      ORDER BY created_at DESC
      LIMIT 200`
