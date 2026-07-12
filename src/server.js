@@ -5,11 +5,16 @@ const session = require('express-session');
 const helmet = require('helmet');
 const { Server } = require('socket.io');
 const config = require('./config');
-const { initSchema, seedAdmin, cleanupExpiredTemporaryUsers } = require('./db');
+const {
+  initSchema,
+  seedAdmin,
+  cleanupExpiredTemporaryUsers,
+  cleanupExpiredVenueRooms
+} = require('./db');
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
 const adminRoutes = require('./routes/admin');
-const { attachRealtime } = require('./realtime');
+const { attachRealtime, emitRoomChanged } = require('./realtime');
 const { logEvent, requestFields } = require('./logger');
 
 async function main() {
@@ -17,13 +22,41 @@ async function main() {
     await initSchema();
     await seedAdmin();
   }
-  await cleanupExpiredTemporaryUsers();
-
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server, {
     cors: false
   });
+  let venueCleanupRunning = false;
+
+  async function runVenueCleanup() {
+    if (venueCleanupRunning) return;
+    venueCleanupRunning = true;
+    try {
+      const result = await cleanupExpiredVenueRooms();
+      if (result.venueIds.length || result.roomIds.length) {
+        logEvent('info', 'venues.cleanup_expired', {
+          venueIds: result.venueIds,
+          roomIds: result.roomIds
+        });
+        for (const roomId of result.roomIds) {
+          await emitRoomChanged(io, roomId);
+        }
+      }
+    } catch (error) {
+      logEvent('error', 'venues.cleanup_failed', {
+        message: error.message,
+        code: error.code,
+        errno: error.errno,
+        sqlState: error.sqlState
+      });
+    } finally {
+      venueCleanupRunning = false;
+    }
+  }
+
+  await cleanupExpiredTemporaryUsers();
+  await runVenueCleanup();
 
   const sessionMiddleware = session({
     name: 'badminton.sid',
@@ -41,7 +74,7 @@ async function main() {
   app.use(helmet({
     contentSecurityPolicy: false
   }));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '3mb' }));
   app.use(sessionMiddleware);
   app.use(express.static(path.join(process.cwd(), 'public')));
 
@@ -92,6 +125,9 @@ async function main() {
     cleanupExpiredTemporaryUsers().catch((error) => console.error(error));
   }, 1000 * 60 * 60 * 24);
   cleanupTimer.unref();
+
+  const venueCleanupTimer = setInterval(runVenueCleanup, 1000 * 60);
+  venueCleanupTimer.unref();
 }
 
 main().catch((error) => {

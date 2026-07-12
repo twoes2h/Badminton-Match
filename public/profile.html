@@ -40,10 +40,13 @@
           </div>
           <div class="profile-avatar-row">
             <div id="profileAvatarPreview" class="avatar large">?</div>
-            <label>
-              头像链接
-              <input name="avatarUrl" type="url" maxlength="500" placeholder="https://...">
-            </label>
+            <div class="stack">
+              <label>
+                头像图片
+                <input id="avatarFileInput" type="file" accept="image/jpeg,image/png,image/webp">
+              </label>
+              <button id="uploadAvatarBtn" type="button" class="secondary">上传头像</button>
+            </div>
           </div>
           <label>
             昵称

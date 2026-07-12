@@ -397,7 +397,6 @@ router.get('/create-options', requireAuth, asyncRoute(async (req, res) => {
            SELECT 1
            FROM rooms r
            WHERE r.venue_id = v.id
-             AND r.status = 'active'
          )
        ORDER BY v.starts_at ASC
        LIMIT 100`
@@ -446,7 +445,6 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
         `SELECT id
          FROM rooms
          WHERE venue_id = ?
-           AND status = 'active'
          LIMIT 1`,
         [venueId]
       );

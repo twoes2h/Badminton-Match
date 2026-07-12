@@ -1,5 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth } = require('../middleware');
 const { markMatchAwaitingResult } = require('../services/results');
@@ -7,6 +10,14 @@ const { logEvent, requestFields } = require('../logger');
 
 const router = express.Router();
 const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
+const AVATAR_UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'avatars');
+const AVATAR_PUBLIC_PREFIX = '/uploads/avatars';
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_TYPES = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp'
+};
 
 function sessionUser(user) {
   return {
@@ -19,27 +30,8 @@ function sessionUser(user) {
   };
 }
 
-function normalizeAvatarUrl(value) {
-  const avatarUrl = String(value || '').trim();
-  if (!avatarUrl) return null;
-  if (avatarUrl.length > 500) {
-    throw new Error('头像链接不能超过 500 个字符');
-  }
-  let parsed;
-  try {
-    parsed = new URL(avatarUrl);
-  } catch {
-    throw new Error('头像链接格式不正确');
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('头像链接必须是 http 或 https 地址');
-  }
-  return avatarUrl;
-}
-
 function profileInput(body) {
   const displayName = String(body.displayName || '').trim();
-  const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
   const gender = body.gender || 'other';
   const birthYear = body.birthYear ? Number(body.birthYear) : null;
   const skillLevel = Number(body.skillLevel || 5);
@@ -60,7 +52,38 @@ function profileInput(body) {
     throw new Error('技术等级需在 1-10 之间');
   }
 
-  return { displayName, avatarUrl, gender, birthYear, skillLevel };
+  return { displayName, gender, birthYear, skillLevel };
+}
+
+function parseAvatarImage(imageData) {
+  const raw = String(imageData || '');
+  const match = raw.match(/^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/=\s]+)$/);
+  if (!match) throw new Error('头像文件格式不正确');
+
+  const mimeType = match[1];
+  const extension = AVATAR_TYPES[mimeType];
+  const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
+  if (buffer.length === 0 || buffer.length > AVATAR_MAX_BYTES) {
+    throw new Error('头像文件需小于 2MB');
+  }
+
+  const valid = (mimeType === 'image/jpeg' && buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+    || (mimeType === 'image/png' && buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+    || (mimeType === 'image/webp' && buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP');
+  if (!valid) throw new Error('头像文件内容不正确');
+
+  return { buffer, extension, mimeType };
+}
+
+async function removeLocalAvatar(avatarUrl) {
+  if (!avatarUrl || !String(avatarUrl).startsWith(`${AVATAR_PUBLIC_PREFIX}/`)) return;
+  const relative = String(avatarUrl).slice(1).replace(/\//g, path.sep);
+  const filePath = path.resolve(process.cwd(), 'public', relative);
+  const uploadRoot = path.resolve(AVATAR_UPLOAD_DIR);
+  if (!filePath.startsWith(uploadRoot + path.sep)) return;
+  await fs.unlink(filePath).catch((error) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
 }
 
 router.post('/register', asyncRoute(async (req, res) => {
@@ -198,6 +221,38 @@ router.get('/me', requireAuth, asyncRoute(async (req, res) => {
   res.json({ user: rows[0] });
 }));
 
+router.post('/avatar', requireAuth, asyncRoute(async (req, res) => {
+  const image = parseAvatarImage(req.body.imageData);
+  await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
+
+  const fileName = `user-${req.session.user.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${image.extension}`;
+  const filePath = path.join(AVATAR_UPLOAD_DIR, fileName);
+  const avatarUrl = `${AVATAR_PUBLIC_PREFIX}/${fileName}`;
+
+  const rows = await query('SELECT avatar_url FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+  if (!rows[0]) throw new Error('用户不存在');
+
+  try {
+    await fs.writeFile(filePath, image.buffer, { flag: 'wx' });
+    await query('UPDATE users SET avatar_url = ? WHERE id = ?', [avatarUrl, req.session.user.id]);
+  } catch (error) {
+    await fs.unlink(filePath).catch(() => {});
+    throw error;
+  }
+
+  await removeLocalAvatar(rows[0].avatar_url);
+  const updatedRows = await query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+  req.session.user = sessionUser(updatedRows[0]);
+  logEvent('info', 'profile.avatar_uploaded', {
+    ...requestFields(req),
+    userId: req.session.user.id,
+    avatarUrl,
+    mimeType: image.mimeType,
+    size: image.buffer.length
+  });
+  res.json({ avatarUrl, user: req.session.user });
+}));
+
 router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
   const profile = profileInput(req.body);
 
@@ -218,7 +273,6 @@ router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
     await conn.query(
       `UPDATE users
        SET display_name = ?,
-           avatar_url = ?,
            gender = ?,
            birth_year = ?,
            skill_level = ?,
@@ -226,7 +280,6 @@ router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
        WHERE id = ?`,
       [
         profile.displayName,
-        profile.avatarUrl,
         profile.gender,
         profile.birthYear,
         profile.skillLevel,

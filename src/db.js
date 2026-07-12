@@ -158,6 +158,70 @@ async function cleanupExpiredTemporaryUsers() {
   });
 }
 
+function placeholders(values) {
+  return values.map(() => '?').join(',');
+}
+
+async function cleanupExpiredVenueRooms() {
+  return transaction(async (conn) => {
+    const expired = await conn.query(
+      `SELECT
+         v.id AS venue_id,
+         r.id AS room_id
+       FROM venues v
+       LEFT JOIN rooms r
+         ON r.venue_id = v.id
+        AND r.status = 'active'
+       WHERE v.ends_at <= NOW()
+       FOR UPDATE`
+    );
+    const venueIds = [...new Set(expired.map((row) => Number(row.venue_id)).filter(Boolean))];
+    const roomIds = [...new Set(expired.map((row) => Number(row.room_id)).filter(Boolean))];
+
+    if (roomIds.length) {
+      await conn.query(
+        `UPDATE matches
+         SET status = 'cancelled',
+             ended_at = COALESCE(ended_at, NOW())
+         WHERE room_id IN (${placeholders(roomIds)})
+           AND status IN ('active','awaiting_result')`,
+        roomIds
+      );
+      await conn.query(
+        `UPDATE room_members
+         SET presence_status = 'offline',
+             play_status = 'idle',
+             current_match_id = NULL
+         WHERE room_id IN (${placeholders(roomIds)})`,
+        roomIds
+      );
+      await conn.query(
+        `UPDATE rooms
+         SET status = 'dissolved',
+             venue_id = NULL
+         WHERE id IN (${placeholders(roomIds)})`,
+        roomIds
+      );
+    }
+
+    if (venueIds.length) {
+      await conn.query(
+        `UPDATE rooms
+         SET venue_id = NULL
+         WHERE venue_id IN (${placeholders(venueIds)})`,
+        venueIds
+      );
+      await conn.query(
+        `DELETE FROM venues
+         WHERE id IN (${placeholders(venueIds)})`,
+        venueIds
+      );
+    }
+
+    return { venueIds, roomIds };
+  });
+}
+
 async function seedAdmin() {
   if (!config.admin.username || !config.admin.password) return;
 
@@ -182,5 +246,6 @@ module.exports = {
   initSchema,
   runMigrations,
   cleanupExpiredTemporaryUsers,
+  cleanupExpiredVenueRooms,
   seedAdmin
 };

@@ -1,4 +1,5 @@
 let profileUser = null;
+let selectedAvatarDataUrl = null;
 
 (async () => {
   profileUser = await requireUser();
@@ -12,7 +13,8 @@ let profileUser = null;
 function bindProfilePage() {
   $('#profileForm').addEventListener('submit', saveProfile);
   $('#passwordForm').addEventListener('submit', changePassword);
-  $('#profileForm').avatarUrl.addEventListener('input', updateAvatarPreview);
+  $('#avatarFileInput').addEventListener('change', previewAvatarFile);
+  $('#uploadAvatarBtn').addEventListener('click', uploadAvatar);
   $('#profileForm').displayName.addEventListener('input', updateAvatarPreview);
   $('#profileForm').gender.addEventListener('change', updateAvatarPreview);
 }
@@ -56,11 +58,11 @@ function renderProfile(user) {
   }
 
   const form = $('#profileForm');
-  form.avatarUrl.value = user.avatar_url || '';
   form.displayName.value = user.display_name || '';
   form.gender.value = user.gender || 'other';
   form.birthYear.value = user.birth_year || '';
   form.skillLevel.value = user.skill_level || 5;
+  selectedAvatarDataUrl = null;
   updateAvatarPreview();
 }
 
@@ -69,10 +71,68 @@ function updateAvatarPreview() {
   const preview = $('#profileAvatarPreview');
   const user = {
     display_name: form.displayName.value || profileUser.displayName,
-    avatar_url: form.avatarUrl.value,
+    avatar_url: selectedAvatarDataUrl || profileUser.avatarUrl,
     gender: form.gender.value || 'other'
   };
   preview.outerHTML = avatarHtml(user, 'large').replace('<div class="avatar', '<div id="profileAvatarPreview" class="avatar');
+}
+
+async function previewAvatarFile(event) {
+  const file = event.currentTarget.files[0];
+  if (!file) {
+    selectedAvatarDataUrl = null;
+    updateAvatarPreview();
+    return;
+  }
+  try {
+    selectedAvatarDataUrl = await readAvatarFile(file);
+    updateAvatarPreview();
+  } catch (error) {
+    event.currentTarget.value = '';
+    selectedAvatarDataUrl = null;
+    updateAvatarPreview();
+    showMessage(error.message);
+  }
+}
+
+function readAvatarFile(file) {
+  const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  if (!allowed.has(file.type)) {
+    return Promise.reject(new Error('请选择 jpg、png 或 webp 图片'));
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    return Promise.reject(new Error('头像文件需小于 2MB'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('头像读取失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadAvatar() {
+  const input = $('#avatarFileInput');
+  const file = input.files[0];
+  if (!file) {
+    showMessage('请先选择头像图片');
+    return;
+  }
+  try {
+    const imageData = selectedAvatarDataUrl || await readAvatarFile(file);
+    const data = await api('/api/auth/avatar', {
+      method: 'POST',
+      body: { imageData }
+    });
+    profileUser.avatarUrl = data.avatarUrl;
+    selectedAvatarDataUrl = null;
+    input.value = '';
+    showMessage('头像已上传');
+    await loadProfile();
+  } catch (error) {
+    showMessage(error.message);
+  }
 }
 
 async function saveProfile(event) {
