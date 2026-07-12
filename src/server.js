@@ -5,7 +5,7 @@ const session = require('express-session');
 const helmet = require('helmet');
 const { Server } = require('socket.io');
 const config = require('./config');
-const { initSchema, seedAdmin } = require('./db');
+const { initSchema, seedAdmin, cleanupExpiredTemporaryUsers } = require('./db');
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
 const adminRoutes = require('./routes/admin');
@@ -16,6 +16,7 @@ async function main() {
     await initSchema();
     await seedAdmin();
   }
+  await cleanupExpiredTemporaryUsers();
 
   const app = express();
   const server = http.createServer(app);
@@ -58,6 +59,9 @@ async function main() {
   app.get(['/room', '/room.html'], (req, res) => {
     res.sendFile(path.join(process.cwd(), 'public', 'room.html'));
   });
+  app.get(['/profile', '/profile.html'], (req, res) => {
+    res.sendFile(path.join(process.cwd(), 'public', 'profile.html'));
+  });
   app.get(['/admin', '/admin.html'], (req, res) => {
     res.sendFile(path.join(process.cwd(), 'public', 'admin.html'));
   });
@@ -75,6 +79,11 @@ async function main() {
   server.listen(config.port, () => {
     console.log(`Badminton match room running at http://localhost:${config.port}`);
   });
+
+  const cleanupTimer = setInterval(() => {
+    cleanupExpiredTemporaryUsers().catch((error) => console.error(error));
+  }, 1000 * 60 * 60 * 24);
+  cleanupTimer.unref();
 }
 
 main().catch((error) => {

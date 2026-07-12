@@ -85,7 +85,8 @@ async function currentUser() {
     id: Number(data.user.id),
     username: data.user.username,
     displayName: data.user.display_name,
-    role: data.user.role
+    role: data.user.role,
+    accountType: data.user.account_type || 'normal'
   };
 }
 
@@ -124,11 +125,20 @@ function renderUserAction(user) {
 }
 
 function bottomNav(active, user) {
+  const links = [
+    { key: 'rooms', href: '/rooms.html', label: '房间' },
+    { key: 'room', href: queryParam('id') ? `/room.html?id=${queryParam('id')}` : '/rooms.html', label: '比赛' },
+    { key: 'profile', href: '/profile.html', label: '我的' }
+  ];
+  if (user && user.role === 'admin') {
+    links.push({ key: 'admin', href: '/admin.html', label: '管理' });
+  }
+
   return `
-    <nav class="bottom-nav">
-      <a class="${active === 'rooms' ? 'active' : ''}" href="/rooms.html">房间</a>
-      <a class="${active === 'room' ? 'active' : ''}" href="${queryParam('id') ? `/room.html?id=${queryParam('id')}` : '/rooms.html'}">比赛</a>
-      <a class="${active === 'admin' ? 'active' : ''}" href="${user && user.role === 'admin' ? '/admin.html' : '/rooms.html'}">管理</a>
+    <nav class="bottom-nav" style="--nav-count:${links.length}">
+      ${links.map((link) => `
+        <a class="${active === link.key ? 'active' : ''}" href="${link.href}">${link.label}</a>
+      `).join('')}
     </nav>
   `;
 }

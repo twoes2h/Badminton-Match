@@ -10,6 +10,8 @@ const router = express.Router();
 const MEMBER_STATUSES = new Set(['idle', 'waiting', 'resting', 'busy']);
 const MATCH_PREFS = new Set(['md', 'wd', 'xd', 'ms', 'ws', 'xs', 'any']);
 const MATCH_TYPE_ORDER = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
+const TEMP_MEMBER_DEFAULT_PASSWORD = '000000';
+const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
 
 function normalizeMatchPreferences(value) {
   const values = Array.isArray(value)
@@ -58,6 +60,43 @@ function makeRoomCode() {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+function makeTemporaryUsername(roomId) {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `tmp${roomId}_${suffix}`;
+}
+
+function normalizeTemporaryMemberInput(body) {
+  const displayName = String(body.displayName || '').trim();
+  const username = String(body.username || '').trim();
+  const gender = body.gender || 'other';
+  const birthYear = body.birthYear ? Number(body.birthYear) : null;
+  const skillLevel = Number(body.skillLevel || 5);
+  const rating = body.rating === undefined || body.rating === ''
+    ? 1000
+    : Math.max(0, Math.min(3000, Math.round(Number(body.rating))));
+
+  if (!displayName || displayName.length > 80) {
+    throw new Error('成员昵称不能为空且不能超过 80 个字符');
+  }
+  if (username && !USERNAME_PATTERN.test(username)) {
+    throw new Error('用户名需为 3-32 位，可包含中文、字母、数字、下划线或短横线');
+  }
+  if (!['male', 'female', 'other'].includes(gender)) {
+    throw new Error('性别参数不正确');
+  }
+  if (birthYear !== null) {
+    const currentYear = new Date().getFullYear();
+    if (birthYear < 1930 || birthYear > currentYear) {
+      throw new Error('出生年份不正确');
+    }
+  }
+  if (skillLevel < 1 || skillLevel > 10) {
+    throw new Error('技术等级需在 1-10 之间');
+  }
+
+  return { displayName, username, gender, birthYear, skillLevel, rating };
 }
 
 async function findActiveRoomForUser(conn, userId) {
@@ -130,6 +169,8 @@ async function getRoomPayload(roomId, userId) {
        u.rating,
        u.skill_level,
        u.role,
+       u.account_type,
+       u.temporary_expires_at,
        u.is_blacklisted
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
@@ -321,6 +362,81 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
 
   await emitRoomChanged(req.app.get('io'), roomId);
   res.json({ room });
+}));
+
+router.post('/:roomId/temporary-members', requireAuth, asyncRoute(async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const input = normalizeTemporaryMemberInput(req.body);
+  const passwordHash = await bcrypt.hash(TEMP_MEMBER_DEFAULT_PASSWORD, 12);
+
+  const created = await transaction(async (conn) => {
+    const room = await assertActiveRoom(conn, roomId);
+    if (Number(room.owner_user_id) !== Number(req.session.user.id) && req.session.user.role !== 'admin') {
+      throw new Error('只有房主或管理员可以添加临时成员');
+    }
+
+    const onlineRows = await conn.query(
+      `SELECT COUNT(*) AS count_value
+       FROM room_members
+       WHERE room_id = ?
+         AND presence_status = 'online'`,
+      [roomId]
+    );
+    if (Number(onlineRows[0].count_value) >= Number(room.max_people)) {
+      throw new Error('房间在线人数已满，不能继续添加成员');
+    }
+
+    let username = input.username;
+    if (username) {
+      const existing = await conn.query('SELECT id FROM users WHERE username = ? LIMIT 1', [username]);
+      if (existing[0]) throw new Error('用户名已存在');
+    } else {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const candidate = makeTemporaryUsername(roomId);
+        const existing = await conn.query('SELECT id FROM users WHERE username = ? LIMIT 1', [candidate]);
+        if (!existing[0]) {
+          username = candidate;
+          break;
+        }
+      }
+      if (!username) throw new Error('临时用户名生成失败，请重试');
+    }
+
+    const result = await conn.query(
+      `INSERT INTO users
+        (username, password_hash, display_name, gender, birth_year, rating, skill_level,
+         role, account_type, temporary_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'user', 'temporary', DATE_ADD(NOW(), INTERVAL 1 MONTH))`,
+      [
+        username,
+        passwordHash,
+        input.displayName,
+        input.gender,
+        input.birthYear,
+        input.rating,
+        input.skillLevel
+      ]
+    );
+
+    await conn.query(
+      `INSERT INTO room_members
+        (room_id, user_id, presence_status, play_status, last_seen_at)
+       VALUES (?, ?, 'online', 'idle', NOW())`,
+      [roomId, result.insertId]
+    );
+    const rows = await conn.query(
+      `SELECT id, username, display_name, gender, birth_year, rating, skill_level,
+              account_type, temporary_expires_at
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [result.insertId]
+    );
+    return rows[0];
+  });
+
+  await emitRoomChanged(req.app.get('io'), roomId);
+  res.status(201).json({ user: created, defaultPassword: TEMP_MEMBER_DEFAULT_PASSWORD });
 }));
 
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {

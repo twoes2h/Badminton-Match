@@ -5,14 +5,41 @@ const { asyncRoute, requireAuth } = require('../middleware');
 const { markMatchAwaitingResult } = require('../services/results');
 
 const router = express.Router();
+const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
 
 function sessionUser(user) {
   return {
     id: Number(user.id),
     username: user.username,
     displayName: user.display_name,
-    role: user.role
+    role: user.role,
+    accountType: user.account_type || 'normal'
   };
+}
+
+function profileInput(body) {
+  const displayName = String(body.displayName || '').trim();
+  const gender = body.gender || 'other';
+  const birthYear = body.birthYear ? Number(body.birthYear) : null;
+  const skillLevel = Number(body.skillLevel || 5);
+
+  if (!displayName || displayName.length > 80) {
+    throw new Error('昵称不能为空且不能超过 80 个字符');
+  }
+  if (!['male', 'female', 'other'].includes(gender)) {
+    throw new Error('性别参数不正确');
+  }
+  if (birthYear !== null) {
+    const currentYear = new Date().getFullYear();
+    if (birthYear < 1930 || birthYear > currentYear) {
+      throw new Error('出生年份不正确');
+    }
+  }
+  if (skillLevel < 1 || skillLevel > 10) {
+    throw new Error('技术等级需在 1-10 之间');
+  }
+
+  return { displayName, gender, birthYear, skillLevel };
 }
 
 router.post('/register', asyncRoute(async (req, res) => {
@@ -23,7 +50,7 @@ router.post('/register', asyncRoute(async (req, res) => {
   const birthYear = req.body.birthYear ? Number(req.body.birthYear) : null;
   const skillLevel = Number(req.body.skillLevel || 5);
 
-  if (!/^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/.test(username)) {
+  if (!USERNAME_PATTERN.test(username)) {
     return res.status(400).json({ error: '用户名需为 3-32 位，可包含中文、字母、数字、下划线或短横线' });
   }
   if (password.length < 6) {
@@ -38,12 +65,19 @@ router.post('/register', asyncRoute(async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, 12);
   const created = await transaction(async (conn) => {
+    const existingRows = await conn.query('SELECT account_type FROM users WHERE username = ? LIMIT 1', [username]);
+    if (existingRows[0]) {
+      if (existingRows[0].account_type === 'temporary') {
+        throw new Error('这个用户名是临时成员账号，请用默认密码 000000 登录后在我的资料里修改密码');
+      }
+      throw new Error('用户名已存在');
+    }
     const userCount = await conn.query('SELECT COUNT(*) AS count_value FROM users');
     const role = Number(userCount[0].count_value) === 0 ? 'admin' : 'user';
     const result = await conn.query(
       `INSERT INTO users
-        (username, password_hash, display_name, gender, birth_year, skill_level, role)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (username, password_hash, display_name, gender, birth_year, skill_level, role, account_type, password_changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'normal', NOW())`,
       [username, passwordHash, displayName, gender, birthYear, skillLevel, role]
     );
     const rows = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [result.insertId]);
@@ -103,13 +137,90 @@ router.post('/logout', requireAuth, asyncRoute(async (req, res) => {
 
 router.get('/me', requireAuth, asyncRoute(async (req, res) => {
   const rows = await query(
-    `SELECT id, username, display_name, gender, birth_year, rating, skill_level, role, matches_played
+    `SELECT
+       id, username, display_name, gender, birth_year, rating, skill_level,
+       role, account_type, temporary_expires_at, password_changed_at,
+       profile_updated_on, matches_played,
+       CASE WHEN profile_updated_on IS NULL OR profile_updated_on < CURDATE() THEN 1 ELSE 0 END AS can_update_profile
      FROM users
      WHERE id = ?
      LIMIT 1`,
     [req.session.user.id]
   );
   res.json({ user: rows[0] });
+}));
+
+router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
+  const profile = profileInput(req.body);
+
+  const user = await transaction(async (conn) => {
+    const rows = await conn.query(
+      `SELECT id, profile_updated_on,
+              CASE WHEN profile_updated_on = CURDATE() THEN 1 ELSE 0 END AS updated_today
+       FROM users
+       WHERE id = ?
+       LIMIT 1`,
+      [req.session.user.id]
+    );
+    if (!rows[0]) throw new Error('用户不存在');
+    if (Number(rows[0].updated_today) === 1) {
+      throw new Error('个人资料一天只能修改一次');
+    }
+
+    await conn.query(
+      `UPDATE users
+       SET display_name = ?,
+           gender = ?,
+           birth_year = ?,
+           skill_level = ?,
+           profile_updated_on = CURDATE()
+       WHERE id = ?`,
+      [profile.displayName, profile.gender, profile.birthYear, profile.skillLevel, req.session.user.id]
+    );
+    const updated = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+    return updated[0];
+  });
+
+  req.session.user = sessionUser(user);
+  res.json({ user: req.session.user });
+}));
+
+router.post('/password', requireAuth, asyncRoute(async (req, res) => {
+  const currentPassword = String(req.body.currentPassword || '');
+  const newPassword = String(req.body.newPassword || '');
+  const confirmPassword = String(req.body.confirmPassword || '');
+
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: '新密码至少 6 位' });
+  }
+  if (newPassword !== confirmPassword) {
+    return res.status(400).json({ error: '两次输入的新密码不一致' });
+  }
+
+  const user = await transaction(async (conn) => {
+    const rows = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+    const found = rows[0];
+    if (!found) throw new Error('用户不存在');
+    if (!(await bcrypt.compare(currentPassword, found.password_hash))) {
+      throw new Error('当前密码不正确');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await conn.query(
+      `UPDATE users
+       SET password_hash = ?,
+           account_type = 'normal',
+           temporary_expires_at = NULL,
+           password_changed_at = NOW()
+       WHERE id = ?`,
+      [passwordHash, req.session.user.id]
+    );
+    const updated = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+    return updated[0];
+  });
+
+  req.session.user = sessionUser(user);
+  res.json({ ok: true, user: req.session.user });
 }));
 
 module.exports = router;

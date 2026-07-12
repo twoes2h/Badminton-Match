@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>我的资料 · 羽毛球匹配</title>
+    <link rel="stylesheet" href="/mobile.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="topline">
+          <div>
+            <h1>我的资料</h1>
+            <p id="profileMeta" class="subtitle">加载中...</p>
+          </div>
+          <div id="userAction"></div>
+        </div>
+      </header>
+
+      <section id="message" class="message"></section>
+
+      <section class="stack">
+        <section class="card stack">
+          <div class="card-title">
+            <h2>账号</h2>
+            <span id="accountTypePill" class="pill"></span>
+          </div>
+          <div class="two">
+            <p class="meta">用户名：<span id="profileUsername">-</span></p>
+            <p class="meta">积分：<span id="profileRating">-</span></p>
+          </div>
+          <p id="temporaryNotice" class="message"></p>
+        </section>
+
+        <form id="profileForm" class="card stack">
+          <div class="card-title">
+            <h2>个人信息</h2>
+            <span id="profileEditPill" class="pill"></span>
+          </div>
+          <label>
+            昵称
+            <input name="displayName" required maxlength="80">
+          </label>
+          <div class="two">
+            <label>
+              性别
+              <select name="gender">
+                <option value="male">男</option>
+                <option value="female">女</option>
+                <option value="other">其他</option>
+              </select>
+            </label>
+            <label>
+              出生年份
+              <input name="birthYear" type="number" min="1930" max="2026">
+            </label>
+          </div>
+          <label>
+            技术等级
+            <input name="skillLevel" type="number" min="1" max="10">
+          </label>
+          <button id="saveProfileBtn" type="submit">保存资料</button>
+        </form>
+
+        <form id="passwordForm" class="card stack">
+          <div class="card-title">
+            <h2>密码</h2>
+          </div>
+          <label>
+            当前密码
+            <input name="currentPassword" type="password" autocomplete="current-password" required>
+          </label>
+          <label>
+            新密码
+            <input name="newPassword" type="password" autocomplete="new-password" minlength="6" required>
+          </label>
+          <label>
+            确认新密码
+            <input name="confirmPassword" type="password" autocomplete="new-password" minlength="6" required>
+          </label>
+          <button type="submit">修改密码</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/common.js"></script>
+    <script src="/profile.js"></script>
+  </body>
+</html>

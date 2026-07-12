@@ -8,13 +8,18 @@ CREATE TABLE IF NOT EXISTS users (
   rating INT NOT NULL DEFAULT 1000,
   skill_level TINYINT UNSIGNED NOT NULL DEFAULT 5,
   role ENUM('user','admin') NOT NULL DEFAULT 'user',
+  account_type ENUM('normal','temporary') NOT NULL DEFAULT 'normal',
+  temporary_expires_at DATETIME NULL,
+  password_changed_at DATETIME NULL,
+  profile_updated_on DATE NULL,
   is_blacklisted TINYINT(1) NOT NULL DEFAULT 0,
   matches_played INT UNSIGNED NOT NULL DEFAULT 0,
   last_seen_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_users_role (role),
-  INDEX idx_users_blacklist (is_blacklisted)
+  INDEX idx_users_blacklist (is_blacklisted),
+  INDEX idx_users_account_type_expires (account_type, temporary_expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS rooms (

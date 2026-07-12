@@ -78,6 +78,45 @@
               <h2>成员</h2>
               <span id="memberCount" class="pill"></span>
             </div>
+            <form id="temporaryMemberForm" class="stack hide">
+              <div class="card-title">
+                <h3>添加临时成员</h3>
+                <span class="pill resting">默认密码 000000</span>
+              </div>
+              <label>
+                昵称
+                <input name="displayName" required maxlength="80">
+              </label>
+              <div class="two">
+                <label>
+                  登录用户名
+                  <input name="username" placeholder="留空自动生成">
+                </label>
+                <label>
+                  性别
+                  <select name="gender">
+                    <option value="male">男</option>
+                    <option value="female">女</option>
+                    <option value="other">其他</option>
+                  </select>
+                </label>
+              </div>
+              <div class="two">
+                <label>
+                  出生年份
+                  <input name="birthYear" type="number" min="1930" max="2026">
+                </label>
+                <label>
+                  技术等级
+                  <input name="skillLevel" type="number" min="1" max="10" value="5">
+                </label>
+              </div>
+              <label>
+                初始积分
+                <input name="rating" type="number" min="0" max="3000" value="1000">
+              </label>
+              <button type="submit">添加成员</button>
+            </form>
             <div id="memberList" class="list"></div>
           </div>
         </section>

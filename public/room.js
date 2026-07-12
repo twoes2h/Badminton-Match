@@ -30,6 +30,7 @@ function bindRoomPage() {
   });
 
   $('#stateForm').addEventListener('submit', saveState);
+  $('#temporaryMemberForm').addEventListener('submit', createTemporaryMember);
   $('#freeMatchForm').addEventListener('submit', createFreeMatch);
   $('#roundMatchForm').addEventListener('submit', createRoundMatches);
   $('#leaveRoomBtn').addEventListener('click', leaveRoom);
@@ -60,6 +61,7 @@ function renderRoom(payload) {
   $('#roomTitle').textContent = room.name;
   $('#roomMeta').textContent = `${room.code} · ${room.court_count} 场地 · ${room.mode === 'round' ? '固定场次' : '自由匹配'}`;
   const isOwner = Number(room.owner_user_id) === pageUser.id;
+  const canManageMembers = isOwner || pageUser.role === 'admin';
 
   renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any');
   renderStatus(member);
@@ -73,6 +75,7 @@ function renderRoom(payload) {
   });
   $('#leaveRoomBtn').classList.toggle('hide', isOwner);
   $('#dissolveRoomBtn').classList.toggle('hide', !isOwner && pageUser.role !== 'admin');
+  $('#temporaryMemberForm').classList.toggle('hide', !canManageMembers);
 }
 
 function renderStatus(member) {
@@ -162,8 +165,12 @@ function renderMembers(members) {
           <strong>${escapeHtml(member.display_name)}</strong>
           <p class="meta">${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level} · ${member.rating} 分</p>
         </div>
-        <span class="pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
+        <div class="row wrap">
+          ${member.account_type === 'temporary' ? '<span class="pill resting">临时</span>' : ''}
+          <span class="pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
+        </div>
       </div>
+      ${member.account_type === 'temporary' ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
       <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
       <p class="meta">${member.presence_status === 'online' ? '在线' : '离线'}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
       ${pageUser.role === 'admin' ? `
@@ -192,6 +199,24 @@ function renderMembers(members) {
       }
     });
   });
+}
+
+async function createTemporaryMember(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const data = await api(`/api/rooms/${roomId}/temporary-members`, {
+      method: 'POST',
+      body: formObject(form)
+    });
+    form.reset();
+    form.skillLevel.value = 5;
+    form.rating.value = 1000;
+    showMessage(`已添加 ${data.user.display_name}，用户名 ${data.user.username}，默认密码 ${data.defaultPassword}`);
+    await loadRoom();
+  } catch (error) {
+    showMessage(error.message);
+  }
 }
 
 function renderMatches(matches) {

@@ -67,6 +67,64 @@ async function runMigrations() {
   await query('CREATE INDEX IF NOT EXISTS idx_rooms_status_owner ON rooms (status, owner_user_id)');
   await query('CREATE INDEX IF NOT EXISTS idx_matches_room_started_status ON matches (room_id, started_at, status)');
   await query('CREATE INDEX IF NOT EXISTS idx_match_players_user_match ON match_players (user_id, match_id)');
+  await query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS account_type ENUM('normal','temporary') NOT NULL DEFAULT 'normal'
+     AFTER role`
+  );
+  await query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS temporary_expires_at DATETIME NULL
+     AFTER account_type`
+  );
+  await query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS password_changed_at DATETIME NULL
+     AFTER temporary_expires_at`
+  );
+  await query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS profile_updated_on DATE NULL
+     AFTER password_changed_at`
+  );
+  await query(
+    `UPDATE users
+     SET password_changed_at = COALESCE(password_changed_at, updated_at)
+     WHERE account_type = 'normal'
+       AND password_changed_at IS NULL`
+  );
+  await query('CREATE INDEX IF NOT EXISTS idx_users_account_type_expires ON users (account_type, temporary_expires_at)');
+}
+
+async function cleanupExpiredTemporaryUsers() {
+  await transaction(async (conn) => {
+    await conn.query(
+      `DELETE rm
+       FROM room_members rm
+       JOIN users u ON u.id = rm.user_id
+       WHERE u.account_type = 'temporary'
+         AND u.temporary_expires_at IS NOT NULL
+         AND u.temporary_expires_at < NOW()
+         AND rm.current_match_id IS NULL`
+    );
+    await conn.query(
+      `DELETE u
+       FROM users u
+       LEFT JOIN match_players mp ON mp.user_id = u.id
+       LEFT JOIN match_results mr ON mr.user_id = u.id
+       LEFT JOIN rating_events re ON re.user_id = u.id
+       LEFT JOIN rooms r ON r.owner_user_id = u.id
+       LEFT JOIN room_members rm ON rm.user_id = u.id
+       WHERE u.account_type = 'temporary'
+         AND u.temporary_expires_at IS NOT NULL
+         AND u.temporary_expires_at < NOW()
+         AND mp.id IS NULL
+         AND mr.id IS NULL
+         AND re.id IS NULL
+         AND r.id IS NULL
+         AND rm.id IS NULL`
+    );
+  });
 }
 
 async function seedAdmin() {
@@ -80,8 +138,8 @@ async function seedAdmin() {
   const passwordHash = await bcrypt.hash(config.admin.password, 12);
   await query(
     `INSERT INTO users
-      (username, password_hash, display_name, role, gender, skill_level, rating)
-     VALUES (?, ?, ?, 'admin', 'other', 5, 1000)`,
+      (username, password_hash, display_name, role, account_type, gender, skill_level, rating, password_changed_at)
+     VALUES (?, ?, ?, 'admin', 'normal', 'other', 5, 1000, NOW())`,
     [config.admin.username, passwordHash, '管理员']
   );
 }
@@ -92,5 +150,6 @@ module.exports = {
   transaction,
   initSchema,
   runMigrations,
+  cleanupExpiredTemporaryUsers,
   seedAdmin
 };

@@ -316,7 +316,7 @@ small {
   bottom: 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(var(--nav-count, 3), 1fr);
   gap: 1px;
   max-width: 960px;
   margin: 0 auto;
