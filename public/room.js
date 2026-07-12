@@ -239,9 +239,15 @@ function renderMatchCard(match) {
   const red = match.players.filter((player) => player.team === 'red');
   const blue = match.players.filter((player) => player.team === 'blue');
   const me = match.players.find((player) => Number(player.user_id) === pageUser.id);
-  const canAct = me && ['active', 'awaiting_result'].includes(match.status);
-  const needsResult = canAct && match.status === 'awaiting_result' && !me.result_submitted;
-  const submitted = canAct && match.status === 'awaiting_result' && me.result_submitted;
+  const room = roomPayload && roomPayload.room;
+  const isOwner = room && Number(room.owner_user_id) === pageUser.id;
+  const allTemporary = match.players.length > 0 && match.players.every((player) => player.account_type === 'temporary');
+  const canJudgeAllTemporary = allTemporary && (isOwner || pageUser.role === 'admin');
+  const isRealPlayer = me && me.account_type !== 'temporary';
+  const canAct = (isRealPlayer || canJudgeAllTemporary) && ['active', 'awaiting_result'].includes(match.status);
+  const needsResult = match.status === 'awaiting_result'
+    && ((isRealPlayer && !me.result_submitted) || canJudgeAllTemporary);
+  const submitted = isRealPlayer && match.status === 'awaiting_result' && me.result_submitted;
   const resultText = match.status === 'invalid'
     ? `无效：${escapeHtml(match.invalid_reason || '结果冲突')}`
     : match.result_winner
@@ -271,9 +277,9 @@ function renderMatchCard(match) {
         <div class="row wrap">
           ${match.status === 'active' ? `
             <button type="button" data-finish-match="${match.id}">结束</button>
-            <button type="button" class="danger" data-leave-match="${match.id}">退出</button>
+            ${isRealPlayer ? `<button type="button" class="danger" data-leave-match="${match.id}">退出</button>` : ''}
           ` : ''}
-          ${needsResult ? resultForm(match.id) : ''}
+          ${needsResult ? resultForm(match.id, { authority: canJudgeAllTemporary && !isRealPlayer }) : ''}
           ${submitted ? '<span class="meta">已提交，等待其他成员</span>' : ''}
         </div>
       ` : ''}
@@ -282,19 +288,29 @@ function renderMatchCard(match) {
 }
 
 function playerLine(player) {
-  return `<span>${escapeHtml(player.display_name)} <small>${player.rating_before}${player.result_submitted ? ' · 已交' : ''}</small></span>`;
+  return `<span>${escapeHtml(player.display_name)} <small>${player.rating_before}${player.account_type === 'temporary' ? ' · 临时' : ''}${player.result_submitted ? ' · 已交' : ''}</small></span>`;
 }
 
-function resultForm(matchId) {
-  return `
-    <form class="result-form" data-result-match="${matchId}">
-      <select name="outcome">
+function resultForm(matchId, options = {}) {
+  const resultSelect = options.authority
+    ? `<select name="verdict">
+        <option value="">按比分</option>
+        <option value="red">红方胜</option>
+        <option value="blue">蓝方胜</option>
+        <option value="draw">平</option>
+        <option value="terminated">终止</option>
+      </select>`
+    : `<select name="outcome">
         <option value="">按比分</option>
         <option value="win">赢</option>
         <option value="lose">输</option>
         <option value="draw">平</option>
         <option value="terminated">终止</option>
-      </select>
+      </select>`;
+
+  return `
+    <form class="result-form" data-result-match="${matchId}">
+      ${resultSelect}
       <input name="scoreRed" type="number" min="0" placeholder="红">
       <input name="scoreBlue" type="number" min="0" placeholder="蓝">
       <button type="submit">提交结果</button>
@@ -390,6 +406,7 @@ async function submitResult(event) {
       method: 'POST',
       body: {
         outcome: data.outcome || null,
+        verdict: data.verdict || null,
         scoreRed: data.scoreRed,
         scoreBlue: data.scoreBlue
       }

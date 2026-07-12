@@ -195,7 +195,9 @@ async function getRoomPayload(roomId, userId) {
          u.display_name,
          u.gender,
          u.rating,
+         u.account_type,
          mr.outcome,
+         mr.verdict,
          mr.score_red,
          mr.score_blue
        FROM match_players mp
@@ -577,17 +579,36 @@ router.post('/matches/:matchId/finish', requireAuth, asyncRoute(async (req, res)
   const matchId = Number(req.params.matchId);
   const roomId = await transaction(async (conn) => {
     const rows = await conn.query(
-      `SELECT m.room_id
+      `SELECT
+         m.room_id,
+         r.owner_user_id,
+         u.role AS requester_role,
+         mp.user_id AS player_user_id,
+         (
+           SELECT COUNT(*)
+           FROM match_players mp2
+           JOIN users player_user ON player_user.id = mp2.user_id
+           WHERE mp2.match_id = m.id
+             AND player_user.account_type <> 'temporary'
+         ) AS real_player_count
        FROM matches m
-       JOIN match_players mp ON mp.match_id = m.id
+       JOIN rooms r ON r.id = m.room_id
+       JOIN users u ON u.id = ?
+       LEFT JOIN match_players mp
+         ON mp.match_id = m.id
+        AND mp.user_id = ?
        WHERE m.id = ?
-         AND mp.user_id = ?
        LIMIT 1`,
-      [matchId, req.session.user.id]
+      [req.session.user.id, req.session.user.id, matchId]
     );
-    if (!rows[0]) throw new Error('你不属于这场比赛');
+    const row = rows[0];
+    if (!row) throw new Error('比赛不存在');
+    const isAuthority = Number(row.owner_user_id) === Number(req.session.user.id) || row.requester_role === 'admin';
+    if (!row.player_user_id && (!isAuthority || Number(row.real_player_count) > 0)) {
+      throw new Error('你不属于这场比赛');
+    }
     await markMatchAwaitingResult(conn, matchId);
-    return Number(rows[0].room_id);
+    return Number(row.room_id);
   });
   await emitRoomChanged(req.app.get('io'), roomId);
   res.json({ ok: true });
@@ -619,6 +640,8 @@ router.post('/matches/:matchId/results', requireAuth, asyncRoute(async (req, res
     matchId,
     userId: req.session.user.id,
     outcome: req.body.outcome,
+    verdict: req.body.verdict,
+    winner: req.body.winner,
     scoreRed: req.body.scoreRed,
     scoreBlue: req.body.scoreBlue,
     note: req.body.note

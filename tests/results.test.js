@@ -2,11 +2,12 @@ const assert = require('assert');
 const { pool } = require('../src/db');
 const { resolveWinner, calculateRatingDeltas } = require('../src/services/results');
 
-function player(userId, team, rating = 1000) {
+function player(userId, team, rating = 1000, accountType = 'normal') {
   return {
     user_id: userId,
     team,
-    rating_before: rating
+    rating_before: rating,
+    account_type: accountType
   };
 }
 
@@ -82,6 +83,47 @@ function result(userId, fields) {
   const deltas = calculateRatingDeltas(players, resolved);
   assert.strictEqual(deltas[0].delta, -deltas[1].delta);
   assert.ok(deltas[0].delta > 0);
+}
+
+{
+  const players = [
+    player(1, 'red'),
+    player(2, 'red', 1000, 'temporary'),
+    player(3, 'blue'),
+    player(4, 'blue')
+  ];
+  const resolved = resolveWinner(players, [
+    result(1, { outcome: 'win' }),
+    result(3, { outcome: 'lose' }),
+    result(4, { outcome: 'win' })
+  ]);
+  assert.strictEqual(resolved.winner, 'red');
+}
+
+{
+  const players = [
+    player(1, 'red', 1000, 'temporary'),
+    player(2, 'red', 1000, 'temporary'),
+    player(3, 'blue', 1000, 'temporary'),
+    player(4, 'blue')
+  ];
+  const resolved = resolveWinner(players, [
+    result(4, { outcome: 'win' })
+  ]);
+  assert.strictEqual(resolved.winner, 'blue');
+}
+
+{
+  const players = [
+    player(1, 'red', 1000, 'temporary'),
+    player(2, 'red', 1000, 'temporary'),
+    player(3, 'blue', 1000, 'temporary'),
+    player(4, 'blue', 1000, 'temporary')
+  ];
+  const resolved = resolveWinner(players, [
+    result(99, { verdict: 'red' })
+  ]);
+  assert.strictEqual(resolved.winner, 'red');
 }
 
 pool.end()

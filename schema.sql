@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS match_results (
   match_id BIGINT UNSIGNED NOT NULL,
   user_id BIGINT UNSIGNED NOT NULL,
   outcome ENUM('win','lose','draw','terminated') NULL,
+  verdict ENUM('red','blue','draw','terminated') NULL,
   score_red SMALLINT UNSIGNED NULL,
   score_blue SMALLINT UNSIGNED NULL,
   note VARCHAR(255) NULL,

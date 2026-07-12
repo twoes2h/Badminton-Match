@@ -4,11 +4,17 @@ function oppositeTeam(team) {
   return team === 'red' ? 'blue' : 'red';
 }
 
-function normalizeSubmission(result, playerTeam) {
-  const hasScore = result.score_red !== null && result.score_red !== undefined
-    && result.score_blue !== null && result.score_blue !== undefined;
+function isTemporaryPlayer(player) {
+  return player && player.account_type === 'temporary';
+}
 
-  if (hasScore) {
+function hasScore(result) {
+  return result.score_red !== null && result.score_red !== undefined
+    && result.score_blue !== null && result.score_blue !== undefined;
+}
+
+function normalizeSubmission(result, playerTeam) {
+  if (hasScore(result)) {
     const scoreRed = Number(result.score_red);
     const scoreBlue = Number(result.score_blue);
     if (!Number.isInteger(scoreRed) || !Number.isInteger(scoreBlue) || scoreRed < 0 || scoreBlue < 0) {
@@ -23,8 +29,25 @@ function normalizeSubmission(result, playerTeam) {
     };
   }
 
+  if (result.verdict) {
+    if (!['red', 'blue', 'draw', 'terminated'].includes(result.verdict)) {
+      throw new Error('不支持的判定结果');
+    }
+    return {
+      source: 'verdict',
+      verdict: result.verdict,
+      diff: null,
+      scoreRed: null,
+      scoreBlue: null
+    };
+  }
+
   if (!result.outcome) {
     throw new Error('请选择输赢平终止，或输入比分');
+  }
+
+  if (!playerTeam && ['win', 'lose'].includes(result.outcome)) {
+    throw new Error('非参赛者请选择红方胜、蓝方胜，或输入比分');
   }
 
   const map = {
@@ -58,13 +81,17 @@ function countByVerdict(items) {
 }
 
 function resolveWinner(players, results) {
-  const byUser = new Map(players.map((player) => [Number(player.user_id), player]));
+  const decidingPlayers = players.filter((player) => !isTemporaryPlayer(player));
+  const byUser = new Map(decidingPlayers.map((player) => [Number(player.user_id), player]));
   const normalized = results.map((result) => {
     const player = byUser.get(Number(result.user_id));
+    if (!player && !hasScore(result) && !result.verdict) {
+      throw new Error('非参赛者结果必须输入比分或选择红蓝胜负');
+    }
     return {
-      ...normalizeSubmission(result, player.team),
+      ...normalizeSubmission(result, player && player.team),
       userId: Number(result.user_id),
-      team: player.team
+      team: player && player.team
     };
   });
 
@@ -85,7 +112,8 @@ function resolveWinner(players, results) {
     };
   }
 
-  if (scoreBased.length === 0 && top.count <= players.length / 2) {
+  const voterCount = Math.max(decidingPlayers.length, decidingItems.length);
+  if (scoreBased.length === 0 && top.count <= voterCount / 2) {
     return {
       status: 'invalid',
       winner: 'invalid',
@@ -187,46 +215,88 @@ async function markMatchAwaitingResult(conn, matchId) {
   return { ...match, status: 'awaiting_result' };
 }
 
-async function submitMatchResult({ matchId, userId, outcome, scoreRed, scoreBlue, note }) {
+async function submitMatchResult({ matchId, userId, outcome, verdict, winner, scoreRed, scoreBlue, note }) {
   return transaction(async (conn) => {
+    const matchRows = await conn.query(
+      `SELECT m.*, r.owner_user_id, u.role AS requester_role
+       FROM matches m
+       JOIN rooms r ON r.id = m.room_id
+       JOIN users u ON u.id = ?
+       WHERE m.id = ?
+       LIMIT 1`,
+      [userId, matchId]
+    );
+    const match = matchRows[0];
+    if (!match) throw new Error('比赛不存在');
+    if (match.status === 'completed' || match.status === 'invalid' || match.status === 'cancelled') {
+      throw new Error('这场比赛已经结算');
+    }
+
     const playerRows = await conn.query(
-      `SELECT mp.*, m.room_id, m.status
+      `SELECT mp.*, u.account_type
        FROM match_players mp
-       JOIN matches m ON m.id = mp.match_id
+       JOIN users u ON u.id = mp.user_id
        WHERE mp.match_id = ?
          AND mp.user_id = ?
        LIMIT 1`,
       [matchId, userId]
     );
-    const player = playerRows[0];
-    if (!player) throw new Error('你不属于这场比赛');
-    if (player.status === 'completed' || player.status === 'invalid' || player.status === 'cancelled') {
-      throw new Error('这场比赛已经结算');
+    const player = playerRows[0] || null;
+    const counts = await conn.query(
+      `SELECT
+         COUNT(*) AS total_count,
+         SUM(CASE WHEN u.account_type <> 'temporary' THEN 1 ELSE 0 END) AS real_count
+       FROM match_players mp
+       JOIN users u ON u.id = mp.user_id
+       WHERE mp.match_id = ?`,
+      [matchId]
+    );
+    const realCount = Number(counts[0].real_count || 0);
+    const isAuthority = Number(match.owner_user_id) === Number(userId) || match.requester_role === 'admin';
+    const isAllTemporary = realCount === 0;
+
+    if (player && isTemporaryPlayer(player)) {
+      throw new Error('临时成员不参与胜负判定，不需要提交结果');
+    }
+    if (!player && !(isAllTemporary && isAuthority)) {
+      throw new Error('你不属于这场比赛');
     }
 
     await markMatchAwaitingResult(conn, matchId);
     const normalized = {
       outcome: outcome || null,
+      verdict: verdict || winner || null,
       score_red: scoreRed === '' || scoreRed === undefined ? null : scoreRed,
       score_blue: scoreBlue === '' || scoreBlue === undefined ? null : scoreBlue
     };
-    normalizeSubmission(normalized, player.team);
+    normalizeSubmission(normalized, player && player.team);
 
     await conn.query(
-      `INSERT INTO match_results (match_id, user_id, outcome, score_red, score_blue, note)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO match_results (match_id, user_id, outcome, verdict, score_red, score_blue, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          outcome = VALUES(outcome),
+         verdict = VALUES(verdict),
          score_red = VALUES(score_red),
          score_blue = VALUES(score_blue),
          note = VALUES(note),
          submitted_at = NOW()`,
-      [matchId, userId, normalized.outcome, normalized.score_red, normalized.score_blue, note || null]
+      [
+        matchId,
+        userId,
+        normalized.outcome,
+        normalized.verdict,
+        normalized.score_red,
+        normalized.score_blue,
+        note || null
+      ]
     );
-    await conn.query(
-      'UPDATE match_players SET result_submitted = 1 WHERE match_id = ? AND user_id = ?',
-      [matchId, userId]
-    );
+    if (player) {
+      await conn.query(
+        'UPDATE match_players SET result_submitted = 1 WHERE match_id = ? AND user_id = ?',
+        [matchId, userId]
+      );
+    }
 
     return finalizeIfReady(conn, matchId);
   });
@@ -234,27 +304,57 @@ async function submitMatchResult({ matchId, userId, outcome, scoreRed, scoreBlue
 
 async function finalizeIfReady(conn, matchId) {
   const players = await conn.query(
-    `SELECT mp.*, u.display_name
+    `SELECT mp.*, u.display_name, u.account_type
      FROM match_players mp
      JOIN users u ON u.id = mp.user_id
      WHERE mp.match_id = ?
      ORDER BY mp.team, mp.id`,
     [matchId]
   );
-  const results = await conn.query('SELECT * FROM match_results WHERE match_id = ?', [matchId]);
-  if (results.length < players.length) {
+  const realPlayers = players.filter((player) => !isTemporaryPlayer(player));
+  const results = await conn.query(
+    `SELECT
+       mr.*,
+       u.role,
+       CASE WHEN u.role = 'admin' OR u.id = r.owner_user_id THEN 1 ELSE 0 END AS is_authority
+     FROM match_results mr
+     JOIN users u ON u.id = mr.user_id
+     JOIN matches m ON m.id = mr.match_id
+     JOIN rooms r ON r.id = m.room_id
+     WHERE mr.match_id = ?
+     ORDER BY mr.submitted_at DESC, mr.id DESC`,
+    [matchId]
+  );
+
+  let decidingPlayers = realPlayers;
+  let decidingResults = results.filter((result) => {
+    return realPlayers.some((player) => Number(player.user_id) === Number(result.user_id));
+  });
+  if (realPlayers.length > 0 && decidingResults.length < realPlayers.length) {
     return {
       finalized: false,
-      needed: players.length,
-      submitted: results.length
+      needed: realPlayers.length,
+      submitted: decidingResults.length
     };
+  }
+
+  if (realPlayers.length === 0) {
+    decidingPlayers = [];
+    decidingResults = results.filter((result) => Number(result.is_authority) === 1).slice(0, 1);
+    if (decidingResults.length === 0) {
+      return {
+        finalized: false,
+        needed: 1,
+        submitted: 0
+      };
+    }
   }
 
   const matchRows = await conn.query('SELECT * FROM matches WHERE id = ? LIMIT 1', [matchId]);
   const match = matchRows[0];
   if (!match) throw new Error('比赛不存在');
 
-  const resolution = resolveWinner(players, results);
+  const resolution = resolveWinner(decidingPlayers, decidingResults);
   const deltas = calculateRatingDeltas(players, resolution);
   const finalStatus = resolution.winner === 'invalid' ? 'invalid' : 'completed';
 

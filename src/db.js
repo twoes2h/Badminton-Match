@@ -88,6 +88,11 @@ async function runMigrations() {
      AFTER password_changed_at`
   );
   await query(
+    `ALTER TABLE match_results
+     ADD COLUMN IF NOT EXISTS verdict ENUM('red','blue','draw','terminated') NULL
+     AFTER outcome`
+  );
+  await query(
     `UPDATE users
      SET password_changed_at = COALESCE(password_changed_at, updated_at)
      WHERE account_type = 'normal'
