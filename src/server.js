@@ -10,6 +10,7 @@ const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
 const adminRoutes = require('./routes/admin');
 const { attachRealtime } = require('./realtime');
+const { logEvent, requestFields } = require('./logger');
 
 async function main() {
   if (config.autoMigrate) {
@@ -72,7 +73,14 @@ async function main() {
 
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    console.error(error);
+    logEvent('error', 'request.error', {
+      ...requestFields(req),
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      stack: error.stack && error.stack.split('\n').slice(0, 4).join(' | ')
+    });
     res.status(400).json({ error: error.message || '请求失败' });
   });
 

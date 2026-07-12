@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth } = require('../middleware');
 const { markMatchAwaitingResult } = require('../services/results');
+const { logEvent, requestFields } = require('../logger');
 
 const router = express.Router();
 const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
@@ -114,14 +115,32 @@ router.post('/login', asyncRoute(async (req, res) => {
   const rows = await query('SELECT * FROM users WHERE username = ? LIMIT 1', [username]);
   const user = rows[0];
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    logEvent('warn', 'auth.login_failed', {
+      ...requestFields(req),
+      username,
+      reason: 'invalid_credentials'
+    });
     return res.status(401).json({ error: '用户名或密码错误' });
   }
   if (user.is_blacklisted) {
+    logEvent('warn', 'auth.login_failed', {
+      ...requestFields(req),
+      username,
+      userId: Number(user.id),
+      reason: 'blacklisted'
+    });
     return res.status(403).json({ error: '账号已被管理员限制登录' });
   }
 
   await query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [user.id]);
   req.session.user = sessionUser(user);
+  logEvent('info', 'auth.login_success', {
+    ...requestFields(req),
+    username,
+    userId: Number(user.id),
+    role: user.role,
+    accountType: user.account_type || 'normal'
+  });
   res.json({ user: req.session.user });
 }));
 
@@ -168,6 +187,14 @@ router.get('/me', requireAuth, asyncRoute(async (req, res) => {
      LIMIT 1`,
     [req.session.user.id]
   );
+  if (!rows[0]) {
+    logEvent('warn', 'auth.me_missing_user', {
+      ...requestFields(req),
+      sessionUserId: req.session.user.id
+    });
+    req.session.destroy(() => {});
+    return res.status(401).json({ error: '登录状态已失效，请重新登录' });
+  }
   res.json({ user: rows[0] });
 }));
 
