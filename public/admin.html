@@ -28,6 +28,39 @@
           <label for="adminRoomsDissolved">已解散</label>
         </div>
         <button id="refreshAdminBtn" type="button">刷新管理数据</button>
+        <section class="card stack">
+          <div class="card-title">
+            <h2>场地</h2>
+          </div>
+          <form id="venueForm" class="stack">
+            <label>
+              场地名称
+              <input name="name" required maxlength="120" placeholder="例如：市民中心 1-3 号场">
+            </label>
+            <div class="two">
+              <label>
+                球场个数
+                <input name="courtCount" type="number" min="1" max="20" value="3">
+              </label>
+              <label>
+                位置链接
+                <input name="locationUrl" type="url" maxlength="500" placeholder="Google Maps 链接">
+              </label>
+            </div>
+            <div class="two">
+              <label>
+                开始时间
+                <input name="startsAt" type="datetime-local" required>
+              </label>
+              <label>
+                结束时间
+                <input name="endsAt" type="datetime-local" required>
+              </label>
+            </div>
+            <button type="submit">添加场地</button>
+          </form>
+          <div id="venueList" class="list"></div>
+        </section>
         <section class="card">
           <div class="card-title">
             <h2>房间</h2>

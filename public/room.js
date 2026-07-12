@@ -3,6 +3,9 @@ const MATCH_CHECK_KEYS = ['any', 'md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 let pageUser = null;
 let roomPayload = null;
 let socket = null;
+let managementOptions = { users: [] };
+let managementOptionsLoaded = false;
+let selectedRoomRegistrationIds = new Set();
 
 (async () => {
   pageUser = await requireUser();
@@ -31,6 +34,8 @@ function bindRoomPage() {
 
   $('#stateForm').addEventListener('submit', saveState);
   $('#temporaryMemberForm').addEventListener('submit', createTemporaryMember);
+  $('#registrationForm').addEventListener('submit', addRoomRegistrations);
+  $('#roomRegistrationSearch').addEventListener('input', renderRoomRegistrationList);
   $('#freeMatchForm').addEventListener('submit', createFreeMatch);
   $('#roundMatchForm').addEventListener('submit', createRoundMatches);
   $('#leaveRoomBtn').addEventListener('click', leaveRoom);
@@ -50,6 +55,9 @@ function connectRoomSocket() {
 async function loadRoom() {
   try {
     roomPayload = await api(`/api/rooms/${roomId}`);
+    if (canManageVenueRoster(roomPayload)) {
+      await ensureManagementOptions();
+    }
     renderRoom(roomPayload);
   } catch (error) {
     showMessage(error.message);
@@ -59,9 +67,10 @@ async function loadRoom() {
 function renderRoom(payload) {
   const { room, member, members, matches } = payload;
   $('#roomTitle').textContent = room.name;
-  $('#roomMeta').textContent = `${room.code} · ${room.court_count} 场地 · ${room.mode === 'round' ? '固定场次' : '自由匹配'}`;
+  $('#roomMeta').textContent = `${room.code} · ${room.court_count} 场地 · ${room.mode === 'round' ? '固定场次' : '自由匹配'}${room.venue_id && room.venue ? ` · ${room.venue.name} · ${formatVenueRange(room.venue)}` : ''}`;
   const isOwner = Number(room.owner_user_id) === pageUser.id;
   const canManageMembers = isOwner || pageUser.role === 'admin';
+  renderVenueInfo(room.venue);
 
   renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any');
   renderStatus(member);
@@ -69,13 +78,45 @@ function renderRoom(payload) {
   renderCourtModes(room.court_count);
   renderMembers(members);
   renderMatches(matches);
+  renderRoomRegistrationList();
 
   $$('[data-mode-panel]').forEach((panel) => {
     panel.classList.toggle('hide', panel.dataset.modePanel !== room.mode);
   });
+  $('#stateForm').classList.toggle('hide', !member && Boolean(room.venue_id));
   $('#leaveRoomBtn').classList.toggle('hide', isOwner);
   $('#dissolveRoomBtn').classList.toggle('hide', !isOwner && pageUser.role !== 'admin');
   $('#temporaryMemberForm').classList.toggle('hide', !canManageMembers);
+  $('#registrationForm').classList.toggle('hide', !canManageMembers || !room.venue_id);
+}
+
+function renderVenueInfo(venue) {
+  const card = $('#venueInfoCard');
+  if (!venue) {
+    card.classList.add('hide');
+    card.innerHTML = '';
+    return;
+  }
+  card.classList.remove('hide');
+  card.innerHTML = `
+    <div class="card-title">
+      <h2>${escapeHtml(venue.name)}</h2>
+      <span class="pill">${venue.court_count} 场</span>
+    </div>
+    <p class="meta">${formatVenueRange(venue)}</p>
+    ${venue.location_url ? `<a class="button secondary" href="${escapeHtml(venue.location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
+  `;
+}
+
+function canManageVenueRoster(payload) {
+  if (!payload || !payload.room || !payload.room.venue_id) return false;
+  return Number(payload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin';
+}
+
+async function ensureManagementOptions() {
+  if (managementOptionsLoaded) return;
+  managementOptions = await api('/api/rooms/create-options');
+  managementOptionsLoaded = true;
 }
 
 function renderStatus(member) {
@@ -156,14 +197,54 @@ function renderCourtModes(count) {
   `).join('');
 }
 
+function renderRoomRegistrationList() {
+  const container = $('#roomRegistrationList');
+  if (!container || !roomPayload || !roomPayload.room.venue_id || !canManageVenueRoster(roomPayload)) return;
+
+  const memberIds = new Set(roomPayload.members.map((member) => Number(member.user_id)));
+  const keyword = $('#roomRegistrationSearch').value.trim().toLowerCase();
+  const users = managementOptions.users.filter((user) => {
+    if (memberIds.has(Number(user.id))) return false;
+    const text = `${user.display_name || ''} ${user.username || ''}`.toLowerCase();
+    return !keyword || text.includes(keyword);
+  });
+
+  container.innerHTML = users.length
+    ? users.map((user) => {
+      const id = `room-register-${user.id}`;
+      return `
+        <input id="${id}" type="checkbox" value="${user.id}" ${selectedRoomRegistrationIds.has(Number(user.id)) ? 'checked' : ''}>
+        <label for="${id}">
+          ${avatarHtml(user, 'small')}
+          <span>${escapeHtml(user.display_name)}</span>
+          <small>Lv.${user.skill_level} · ${user.rating}</small>
+        </label>
+      `;
+    }).join('')
+    : '<p class="muted">没有可添加的成员。</p>';
+
+  $$('#roomRegistrationList input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const userId = Number(checkbox.value);
+      if (checkbox.checked) selectedRoomRegistrationIds.add(userId);
+      else selectedRoomRegistrationIds.delete(userId);
+    });
+  });
+}
+
 function renderMembers(members) {
+  const canManageMembers = roomPayload
+    && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
   $('#memberCount').textContent = `${members.filter((member) => member.presence_status === 'online').length}/${members.length}`;
   $('#memberList').innerHTML = members.map((member) => `
     <article class="item">
       <div class="item-head">
-        <div>
-          <strong>${escapeHtml(member.display_name)}</strong>
-          <p class="meta">${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level} · ${member.rating} 分</p>
+        <div class="member-line">
+          ${avatarHtml(member, 'small')}
+          <div>
+            <strong>${escapeHtml(member.display_name)}</strong>
+            <p class="meta">${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level} · ${member.rating} 分</p>
+          </div>
         </div>
         <div class="row wrap">
           ${member.account_type === 'temporary' ? '<span class="pill resting">临时</span>' : ''}
@@ -183,6 +264,9 @@ function renderMembers(members) {
           </select>
         </label>
       ` : ''}
+      ${canManageMembers && roomPayload.room.venue_id ? `
+        <button type="button" class="secondary" data-remove-registration="${member.user_id}">移出报名</button>
+      ` : ''}
     </article>
   `).join('');
 
@@ -199,6 +283,9 @@ function renderMembers(members) {
       }
     });
   });
+  $$('[data-remove-registration]').forEach((button) => {
+    button.addEventListener('click', () => removeRoomRegistration(button.dataset.removeRegistration));
+  });
 }
 
 async function createTemporaryMember(event) {
@@ -213,6 +300,36 @@ async function createTemporaryMember(event) {
     form.skillLevel.value = 5;
     form.rating.value = 1000;
     showMessage(`已添加 ${data.user.display_name}，用户名 ${data.user.username}，默认密码 ${data.defaultPassword}`);
+    await loadRoom();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function addRoomRegistrations(event) {
+  event.preventDefault();
+  if (selectedRoomRegistrationIds.size === 0) {
+    showMessage('请选择报名成员');
+    return;
+  }
+  try {
+    await api(`/api/rooms/${roomId}/registrations`, {
+      method: 'POST',
+      body: { userIds: [...selectedRoomRegistrationIds] }
+    });
+    selectedRoomRegistrationIds = new Set();
+    $('#roomRegistrationSearch').value = '';
+    showMessage('报名名单已更新');
+    await loadRoom();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function removeRoomRegistration(userId) {
+  if (!window.confirm('确认把这个成员移出报名名单？')) return;
+  try {
+    await api(`/api/rooms/${roomId}/registrations/${userId}`, { method: 'DELETE' });
     await loadRoom();
   } catch (error) {
     showMessage(error.message);
@@ -335,6 +452,17 @@ function updateResultScoreFields(form) {
   const fields = $('[data-score-fields]', form);
   if (!mode || !fields) return;
   fields.classList.toggle('hide', mode.value !== 'score');
+}
+
+function formatVenueRange(venue) {
+  if (!venue || !venue.starts_at || !venue.ends_at) return '-';
+  const start = new Date(venue.starts_at);
+  const end = new Date(venue.ends_at);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '-';
+  const date = start.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+  const startTime = start.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const endTime = end.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${date} ${startTime}-${endTime}`;
 }
 
 function winnerLabel(winner) {

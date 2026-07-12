@@ -12,13 +12,33 @@ function sessionUser(user) {
     id: Number(user.id),
     username: user.username,
     displayName: user.display_name,
+    avatarUrl: user.avatar_url || null,
     role: user.role,
     accountType: user.account_type || 'normal'
   };
 }
 
+function normalizeAvatarUrl(value) {
+  const avatarUrl = String(value || '').trim();
+  if (!avatarUrl) return null;
+  if (avatarUrl.length > 500) {
+    throw new Error('头像链接不能超过 500 个字符');
+  }
+  let parsed;
+  try {
+    parsed = new URL(avatarUrl);
+  } catch {
+    throw new Error('头像链接格式不正确');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('头像链接必须是 http 或 https 地址');
+  }
+  return avatarUrl;
+}
+
 function profileInput(body) {
   const displayName = String(body.displayName || '').trim();
+  const avatarUrl = normalizeAvatarUrl(body.avatarUrl);
   const gender = body.gender || 'other';
   const birthYear = body.birthYear ? Number(body.birthYear) : null;
   const skillLevel = Number(body.skillLevel || 5);
@@ -39,7 +59,7 @@ function profileInput(body) {
     throw new Error('技术等级需在 1-10 之间');
   }
 
-  return { displayName, gender, birthYear, skillLevel };
+  return { displayName, avatarUrl, gender, birthYear, skillLevel };
 }
 
 router.post('/register', asyncRoute(async (req, res) => {
@@ -139,6 +159,7 @@ router.get('/me', requireAuth, asyncRoute(async (req, res) => {
   const rows = await query(
     `SELECT
        id, username, display_name, gender, birth_year, rating, skill_level,
+       avatar_url,
        role, account_type, temporary_expires_at, password_changed_at,
        profile_updated_on, matches_played,
        CASE WHEN profile_updated_on IS NULL OR profile_updated_on < CURDATE() THEN 1 ELSE 0 END AS can_update_profile
@@ -170,12 +191,20 @@ router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
     await conn.query(
       `UPDATE users
        SET display_name = ?,
+           avatar_url = ?,
            gender = ?,
            birth_year = ?,
            skill_level = ?,
            profile_updated_on = CURDATE()
        WHERE id = ?`,
-      [profile.displayName, profile.gender, profile.birthYear, profile.skillLevel, req.session.user.id]
+      [
+        profile.displayName,
+        profile.avatarUrl,
+        profile.gender,
+        profile.birthYear,
+        profile.skillLevel,
+        req.session.user.id
+      ]
     );
     const updated = await conn.query('SELECT * FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
     return updated[0];

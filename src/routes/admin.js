@@ -8,6 +8,60 @@ const ADMIN_MEMBER_STATUSES = new Set(['idle', 'waiting', 'resting', 'busy', 'lo
 
 router.use(requireAuth, requireAdmin);
 
+function normalizeDateTime(value, fieldName) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?$/);
+  if (!match) throw new Error(`${fieldName}格式不正确`);
+  return `${match[1]} ${match[2]}:${match[3] || '00'}`;
+}
+
+function dateTimeMs(value) {
+  if (value instanceof Date) return value.getTime();
+  return new Date(String(value).replace(' ', 'T')).getTime();
+}
+
+function normalizeVenueInput(body, partial = false) {
+  const fields = {};
+  if (!partial || body.name !== undefined) {
+    const name = String(body.name || '').trim();
+    if (!name || name.length > 120) throw new Error('场地名称不能为空且不能超过 120 个字符');
+    fields.name = name;
+  }
+  if (!partial || body.courtCount !== undefined) {
+    fields.court_count = Math.max(1, Math.min(20, Number(body.courtCount || 1)));
+  }
+  if (!partial || body.startsAt !== undefined) {
+    fields.starts_at = normalizeDateTime(body.startsAt, '开始时间');
+  }
+  if (!partial || body.endsAt !== undefined) {
+    fields.ends_at = normalizeDateTime(body.endsAt, '结束时间');
+  }
+  if (!partial || body.locationUrl !== undefined) {
+    const locationUrl = String(body.locationUrl || '').trim();
+    if (locationUrl.length > 500) throw new Error('位置链接不能超过 500 个字符');
+    if (locationUrl) {
+      let parsed;
+      try {
+        parsed = new URL(locationUrl);
+      } catch {
+        throw new Error('位置链接格式不正确');
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('位置链接必须是 http 或 https 地址');
+      }
+    }
+    fields.location_url = locationUrl || null;
+  }
+  if (body.status !== undefined) {
+    if (!['active', 'inactive'].includes(body.status)) throw new Error('场地状态不正确');
+    fields.status = body.status;
+  }
+  if (fields.starts_at && fields.ends_at && dateTimeMs(fields.starts_at) >= dateTimeMs(fields.ends_at)) {
+    throw new Error('结束时间必须晚于开始时间');
+  }
+  return fields;
+}
+
 async function dissolveRoom(conn, roomId) {
   await conn.query("UPDATE rooms SET status = 'dissolved' WHERE id = ?", [roomId]);
   await conn.query(
@@ -31,7 +85,7 @@ async function dissolveRoom(conn, roomId) {
 router.get('/users', asyncRoute(async (req, res) => {
   const users = await query(
     `SELECT
-       id, username, display_name, gender, birth_year, rating, skill_level,
+       id, username, display_name, avatar_url, gender, birth_year, rating, skill_level,
        role, account_type, is_blacklisted, matches_played, last_seen_at, created_at
      FROM users
      ORDER BY created_at DESC
@@ -54,6 +108,14 @@ router.patch('/users/:userId', asyncRoute(async (req, res) => {
 
   if (Object.keys(fields).length === 0) {
     return res.status(400).json({ error: '没有可更新字段' });
+  }
+  if (Number(userId) === Number(req.session.user.id)) {
+    if (fields.role && fields.role !== 'admin') {
+      return res.status(400).json({ error: '不能取消自己的管理员权限' });
+    }
+    if (fields.is_blacklisted === 1) {
+      return res.status(400).json({ error: '不能拉黑自己' });
+    }
   }
 
   await transaction(async (conn) => {
@@ -78,6 +140,97 @@ router.patch('/users/:userId', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.get('/venues', asyncRoute(async (req, res) => {
+  const venues = await query(
+    `SELECT
+       v.*,
+       r.id AS active_room_id,
+       r.name AS active_room_name,
+       r.code AS active_room_code
+     FROM venues v
+     LEFT JOIN rooms r
+       ON r.venue_id = v.id
+      AND r.status = 'active'
+     ORDER BY v.starts_at DESC, v.created_at DESC
+     LIMIT 200`
+  );
+  res.json({ venues });
+}));
+
+router.post('/venues', asyncRoute(async (req, res) => {
+  const fields = normalizeVenueInput(req.body);
+  const result = await query(
+    `INSERT INTO venues
+      (name, court_count, starts_at, ends_at, location_url, status, created_by)
+     VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+    [
+      fields.name,
+      fields.court_count,
+      fields.starts_at,
+      fields.ends_at,
+      fields.location_url,
+      req.session.user.id
+    ]
+  );
+  const rows = await query('SELECT * FROM venues WHERE id = ? LIMIT 1', [result.insertId]);
+  res.status(201).json({ venue: rows[0] });
+}));
+
+router.patch('/venues/:venueId', asyncRoute(async (req, res) => {
+  const venueId = Number(req.params.venueId);
+  const fields = normalizeVenueInput(req.body, true);
+
+  if ((fields.starts_at && !fields.ends_at) || (!fields.starts_at && fields.ends_at)) {
+    const rows = await query('SELECT starts_at, ends_at FROM venues WHERE id = ? LIMIT 1', [venueId]);
+    if (!rows[0]) throw new Error('场地不存在');
+    const startsAt = fields.starts_at || rows[0].starts_at;
+    const endsAt = fields.ends_at || rows[0].ends_at;
+    if (dateTimeMs(startsAt) >= dateTimeMs(endsAt)) throw new Error('结束时间必须晚于开始时间');
+  }
+
+  if (Object.keys(fields).length === 0) {
+    return res.status(400).json({ error: '没有可更新字段' });
+  }
+
+  await transaction(async (conn) => {
+    if (fields.status === 'inactive') {
+      const roomRows = await conn.query(
+        `SELECT id
+         FROM rooms
+         WHERE venue_id = ?
+           AND status = 'active'
+         LIMIT 1`,
+        [venueId]
+      );
+      if (roomRows[0]) throw new Error('这个场地还有当前房间，不能停用');
+    }
+    const assignments = Object.keys(fields).map((field) => `${field} = ?`).join(', ');
+    await conn.query(
+      `UPDATE venues SET ${assignments} WHERE id = ?`,
+      [...Object.values(fields), venueId]
+    );
+  });
+
+  res.json({ ok: true });
+}));
+
+router.delete('/venues/:venueId', asyncRoute(async (req, res) => {
+  const venueId = Number(req.params.venueId);
+  await transaction(async (conn) => {
+    const roomRows = await conn.query(
+      `SELECT id
+       FROM rooms
+       WHERE venue_id = ?
+         AND status = 'active'
+       LIMIT 1`,
+      [venueId]
+    );
+    if (roomRows[0]) throw new Error('这个场地还有当前房间，不能停用');
+    await conn.query("UPDATE venues SET status = 'inactive' WHERE id = ?", [venueId]);
+  });
+  res.json({ ok: true });
+}));
+
 router.get('/rooms', asyncRoute(async (req, res) => {
   const status = ['active', 'dissolved'].includes(req.query.status) ? req.query.status : 'active';
   const orderBy = status === 'dissolved'
@@ -86,9 +239,14 @@ router.get('/rooms', asyncRoute(async (req, res) => {
   const rooms = await query(
     `SELECT
        r.*,
+       v.name AS venue_name,
+       v.starts_at AS venue_starts_at,
+       v.ends_at AS venue_ends_at,
+       v.location_url AS venue_location_url,
        COUNT(CASE WHEN rm.presence_status = 'online' THEN 1 END) AS online_count,
        COUNT(rm.id) AS member_count
      FROM rooms r
+     LEFT JOIN venues v ON v.id = r.venue_id
      LEFT JOIN room_members rm ON rm.room_id = r.id
      WHERE r.status = ?
      GROUP BY r.id

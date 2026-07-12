@@ -7,6 +7,7 @@ let adminUsers = [];
   renderUserAction(adminUser);
   document.body.insertAdjacentHTML('beforeend', bottomNav('admin', adminUser));
   $('#refreshAdminBtn').addEventListener('click', loadAdminData);
+  $('#venueForm').addEventListener('submit', createVenue);
   $$('[name="roomStatusFilter"]').forEach((input) => {
     input.addEventListener('change', loadAdminData);
   });
@@ -19,16 +20,43 @@ let adminUsers = [];
 async function loadAdminData() {
   try {
     const roomStatus = $('[name="roomStatusFilter"]:checked').value;
-    const [roomData, userData] = await Promise.all([
+    const [roomData, userData, venueData] = await Promise.all([
       api(`/api/admin/rooms?status=${encodeURIComponent(roomStatus)}`),
-      api('/api/admin/users')
+      api('/api/admin/users'),
+      api('/api/admin/venues')
     ]);
+    renderVenues(venueData.venues);
     renderRooms(roomData.rooms);
     adminUsers = userData.users;
     renderFilteredUsers();
   } catch (error) {
     showMessage(error.message);
   }
+}
+
+function renderVenues(venues) {
+  $('#venueList').innerHTML = venues.length
+    ? venues.map((venue) => `
+      <article class="item">
+        <div class="item-head">
+          <div>
+            <strong>${escapeHtml(venue.name)}</strong>
+            <p class="meta">${venue.court_count} 个球场 · ${formatDateTime(venue.starts_at)} - ${formatTime(venue.ends_at)}</p>
+          </div>
+          <span class="pill ${venue.status === 'inactive' ? 'locked' : ''}">${venue.status === 'inactive' ? '已停用' : '可用'}</span>
+        </div>
+        ${venue.location_url ? `<a class="button secondary" href="${escapeHtml(venue.location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
+        ${venue.active_room_id ? `<p class="meta">当前房间：${escapeHtml(venue.active_room_name)} · ${escapeHtml(venue.active_room_code)}</p>` : ''}
+        <div class="row wrap">
+          <button type="button" class="danger" data-disable-venue="${venue.id}" ${venue.active_room_id || venue.status === 'inactive' ? 'disabled' : ''}>停用</button>
+        </div>
+      </article>
+    `).join('')
+    : '<p class="muted">暂无场地。</p>';
+
+  $$('[data-disable-venue]').forEach((button) => {
+    button.addEventListener('click', () => disableVenue(button.dataset.disableVenue));
+  });
 }
 
 function renderRooms(rooms) {
@@ -48,6 +76,7 @@ function renderRooms(rooms) {
           </div>
           <span class="pill">${room.online_count || 0}/${room.max_people}</span>
         </div>
+        ${room.venue_id ? `<p class="meta">场地房间 · ${escapeHtml(room.venue_name || '')} · ${formatDateTime(room.venue_starts_at)} - ${formatTime(room.venue_ends_at)}</p>` : ''}
         <div class="two">
           <label>
             场地
@@ -109,7 +138,7 @@ function renderDissolvedRoom(room) {
         </div>
         <span class="pill">已解散</span>
       </div>
-      <p class="meta">${room.court_count} 个场地 · 上限 ${room.max_people} 人 · 成员 ${room.member_count || 0} 人</p>
+      <p class="meta">${room.court_count} 个场地 · 上限 ${room.max_people} 人 · 成员 ${room.member_count || 0} 人${room.venue_name ? ` · ${escapeHtml(room.venue_name)}` : ''}</p>
       <p class="meta">创建：${formatDateTime(room.created_at)}</p>
       <p class="meta">解散：${formatDateTime(room.updated_at)}</p>
     </article>
@@ -130,6 +159,16 @@ function formatDateTime(value) {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function formatTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
@@ -166,6 +205,9 @@ function renderUsers(users) {
   $$('[data-blacklist]').forEach((button) => {
     button.addEventListener('click', () => setBlacklist(button.dataset.blacklist, button.dataset.value === '1'));
   });
+  $$('[data-role-user]').forEach((button) => {
+    button.addEventListener('click', () => setRole(button.dataset.roleUser, button.dataset.roleValue));
+  });
 }
 
 function renderUserCard(user) {
@@ -177,7 +219,7 @@ function renderUserCard(user) {
 
   return `
     <article class="user-card ${user.is_blacklisted ? 'is-locked' : ''}">
-      <div class="avatar ${user.gender || 'other'}">${avatarText(user.display_name || user.username)}</div>
+      ${avatarHtml(user)}
       <strong>${escapeHtml(user.display_name)}</strong>
       <p class="meta">${escapeHtml(user.username)}</p>
       <div class="user-card-meta">
@@ -186,6 +228,9 @@ function renderUserCard(user) {
         <span>${user.rating}分</span>
       </div>
       ${tags.length ? `<p class="meta">${tags.join(' · ')}</p>` : '<p class="meta">正常</p>'}
+      <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${Number(user.id) === Number(adminUser.id) ? 'disabled' : ''}>
+        ${user.role === 'admin' ? '取消管理' : '任命管理'}
+      </button>
       <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
         ${user.is_blacklisted ? '解除' : '拉黑'}
       </button>
@@ -196,6 +241,33 @@ function renderUserCard(user) {
 function avatarText(value) {
   const text = String(value || '?').trim();
   return escapeHtml([...text][0] || '?');
+}
+
+async function createVenue(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api('/api/admin/venues', {
+      method: 'POST',
+      body: formObject(form)
+    });
+    form.reset();
+    form.courtCount.value = 3;
+    showMessage('场地已添加');
+    await loadAdminData();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function disableVenue(venueId) {
+  if (!window.confirm('确认停用这个场地？')) return;
+  try {
+    await api(`/api/admin/venues/${venueId}`, { method: 'DELETE' });
+    await loadAdminData();
+  } catch (error) {
+    showMessage(error.message);
+  }
 }
 
 async function saveRoom(roomId) {
@@ -229,6 +301,18 @@ async function setBlacklist(userId, isBlacklisted) {
     await api(`/api/admin/users/${userId}`, {
       method: 'PATCH',
       body: { isBlacklisted }
+    });
+    await loadAdminData();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function setRole(userId, role) {
+  try {
+    await api(`/api/admin/users/${userId}`, {
+      method: 'PATCH',
+      body: { role }
     });
     await loadAdminData();
   } catch (error) {

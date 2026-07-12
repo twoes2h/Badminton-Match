@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(64) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(80) NOT NULL,
+  avatar_url VARCHAR(500) NULL,
   gender ENUM('male','female','other') NOT NULL DEFAULT 'other',
   birth_year SMALLINT UNSIGNED NULL,
   rating INT NOT NULL DEFAULT 1000,
@@ -22,11 +23,27 @@ CREATE TABLE IF NOT EXISTS users (
   INDEX idx_users_account_type_expires (account_type, temporary_expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS venues (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL,
+  court_count TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  starts_at DATETIME NOT NULL,
+  ends_at DATETIME NOT NULL,
+  location_url VARCHAR(500) NULL,
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_venues_creator FOREIGN KEY (created_by) REFERENCES users(id),
+  INDEX idx_venues_status_time (status, starts_at, ends_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS rooms (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   code VARCHAR(12) NOT NULL UNIQUE,
   name VARCHAR(120) NOT NULL,
   sport_key VARCHAR(40) NOT NULL DEFAULT 'badminton',
+  venue_id BIGINT UNSIGNED NULL,
   mode ENUM('free','round') NOT NULL DEFAULT 'free',
   password_hash VARCHAR(255) NULL,
   court_count TINYINT UNSIGNED NOT NULL DEFAULT 1,
@@ -36,8 +53,10 @@ CREATE TABLE IF NOT EXISTS rooms (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_rooms_owner FOREIGN KEY (owner_user_id) REFERENCES users(id),
+  CONSTRAINT fk_rooms_venue FOREIGN KEY (venue_id) REFERENCES venues(id),
   INDEX idx_rooms_status (status),
   INDEX idx_rooms_code (code),
+  INDEX idx_rooms_venue_status (venue_id, status),
   INDEX idx_rooms_status_owner (status, owner_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

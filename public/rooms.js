@@ -1,4 +1,6 @@
 let pageUser = null;
+let createOptions = { venues: [], users: [] };
+let selectedCreateRegistrationIds = new Set();
 
 (async () => {
   pageUser = await requireUser();
@@ -7,6 +9,7 @@ let pageUser = null;
   renderUserAction(pageUser);
   document.body.insertAdjacentHTML('beforeend', bottomNav('rooms', pageUser));
   bindRoomsPage();
+  if (pageUser.role === 'admin') await loadCreateOptions();
   await loadRooms();
 })();
 
@@ -17,18 +20,89 @@ function bindRoomsPage() {
   });
 
   $('#refreshRoomsBtn').addEventListener('click', () => loadRooms());
+  $('#venueSelect').addEventListener('change', renderVenueCreateSelection);
+  $('#registrationSearch').addEventListener('input', renderCreateRegistrationList);
 
   $('#createRoomForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
+      const body = formObject(event.currentTarget);
+      body.registeredUserIds = [...selectedCreateRegistrationIds];
       const data = await api('/api/rooms', {
         method: 'POST',
-        body: formObject(event.currentTarget)
+        body
       });
       window.location.href = `/room.html?id=${data.room.id}`;
     } catch (error) {
       showMessage(error.message);
     }
+  });
+}
+
+async function loadCreateOptions() {
+  try {
+    createOptions = await api('/api/rooms/create-options');
+    $('#venueCreateBox').classList.remove('hide');
+    renderVenueOptions();
+    renderCreateRegistrationList();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+function renderVenueOptions() {
+  $('#venueSelect').innerHTML = `
+    <option value="">普通房间，不绑定场地</option>
+    ${createOptions.venues.map((venue) => `
+      <option value="${venue.id}">${escapeHtml(venue.name)} · ${formatVenueRange(venue)}</option>
+    `).join('')}
+  `;
+  renderVenueCreateSelection();
+}
+
+function selectedVenue() {
+  const venueId = Number($('#venueSelect').value || 0);
+  return createOptions.venues.find((venue) => Number(venue.id) === venueId) || null;
+}
+
+function renderVenueCreateSelection() {
+  const venue = selectedVenue();
+  const form = $('#createRoomForm');
+  form.courtCount.disabled = Boolean(venue);
+  if (venue) form.courtCount.value = venue.court_count;
+  $('#venueRosterBox').classList.toggle('hide', !venue);
+  $('#venueCreateMeta').innerHTML = venue
+    ? `${venue.court_count} 个球场 · ${formatVenueRange(venue)}${venue.location_url ? ` · <a href="${escapeHtml(venue.location_url)}" target="_blank" rel="noreferrer">位置</a>` : ''}`
+    : '不选择场地时创建普通房间。';
+}
+
+function renderCreateRegistrationList() {
+  const keyword = $('#registrationSearch').value.trim().toLowerCase();
+  const users = createOptions.users.filter((user) => {
+    const text = `${user.display_name || ''} ${user.username || ''}`.toLowerCase();
+    return !keyword || text.includes(keyword);
+  });
+
+  $('#createRegistrationList').innerHTML = users.length
+    ? users.map((user) => {
+      const id = `create-register-${user.id}`;
+      return `
+        <input id="${id}" type="checkbox" value="${user.id}" ${selectedCreateRegistrationIds.has(Number(user.id)) ? 'checked' : ''}>
+        <label for="${id}">
+          ${avatarHtml(user, 'small')}
+          <span>${escapeHtml(user.display_name)}</span>
+          <small>Lv.${user.skill_level} · ${user.rating}</small>
+        </label>
+      `;
+    }).join('')
+    : '<p class="muted">没有符合条件的成员。</p>';
+
+  $$('#createRegistrationList input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const userId = Number(checkbox.value);
+      if (checkbox.checked) selectedCreateRegistrationIds.add(userId);
+      else selectedCreateRegistrationIds.delete(userId);
+    });
   });
 }
 
@@ -48,17 +122,24 @@ async function loadRooms(q = '') {
 }
 
 function renderRoomItem(room) {
+  const isVenueRoom = Boolean(room.venue_id);
   return `
     <article class="item">
       <div class="item-head">
         <div>
           <strong>${escapeHtml(room.name)}</strong>
-          <p class="meta">${escapeHtml(room.code)} · ${room.mode === 'round' ? '固定场次' : '自由匹配'}</p>
+          <p class="meta">${escapeHtml(room.code)} · ${room.mode === 'round' ? '固定场次' : '自由匹配'}${isVenueRoom ? ' · 场地房间' : ''}</p>
         </div>
         <span class="pill">${room.online_count || 0}/${room.max_people}</span>
       </div>
       <p class="meta">${room.court_count} 个场地</p>
-      <button type="button" data-join-room="${room.id}">进入房间</button>
+      ${isVenueRoom ? `
+        <p class="meta">${escapeHtml(room.venue_name || '')} · ${formatVenueRange({ starts_at: room.venue_starts_at, ends_at: room.venue_ends_at })}</p>
+        ${room.venue_location_url ? `<a class="button secondary" href="${escapeHtml(room.venue_location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
+      ` : ''}
+      ${isVenueRoom && pageUser.role === 'admin'
+        ? `<a class="button" href="/room.html?id=${room.id}">管理房间</a>`
+        : `<button type="button" data-join-room="${room.id}">进入房间</button>`}
     </article>
   `;
 }
@@ -74,4 +155,15 @@ async function joinRoom(roomId) {
   } catch (error) {
     showMessage(error.message);
   }
+}
+
+function formatVenueRange(venue) {
+  if (!venue || !venue.starts_at || !venue.ends_at) return '-';
+  const start = new Date(venue.starts_at);
+  const end = new Date(venue.ends_at);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '-';
+  const date = start.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+  const startTime = start.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const endTime = end.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${date} ${startTime}-${endTime}`;
 }

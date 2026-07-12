@@ -75,6 +75,28 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function avatarText(value) {
+  const text = String(value || '?').trim();
+  return escapeHtml([...text][0] || '?');
+}
+
+function avatarUrlOf(user) {
+  return user && (user.avatar_url || user.avatarUrl || '');
+}
+
+function avatarHtml(user, extraClass = '') {
+  const url = avatarUrlOf(user);
+  const gender = (user && user.gender) || 'other';
+  const label = (user && (user.display_name || user.displayName || user.username)) || '?';
+  return `
+    <div class="avatar ${gender} ${extraClass}">
+      ${url
+        ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(label)}">`
+        : avatarText(label)}
+    </div>
+  `;
+}
+
 function queryParam(name) {
   return new URLSearchParams(window.location.search).get(name);
 }
@@ -85,6 +107,7 @@ async function currentUser() {
     id: Number(data.user.id),
     username: data.user.username,
     displayName: data.user.display_name,
+    avatarUrl: data.user.avatar_url || null,
     role: data.user.role,
     accountType: data.user.account_type || 'normal'
   };

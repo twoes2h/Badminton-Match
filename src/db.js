@@ -54,6 +54,32 @@ async function initSchema() {
 
 async function runMigrations() {
   await query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(500) NULL
+     AFTER display_name`
+  );
+  await query(
+    `CREATE TABLE IF NOT EXISTS venues (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       name VARCHAR(120) NOT NULL,
+       court_count TINYINT UNSIGNED NOT NULL DEFAULT 1,
+       starts_at DATETIME NOT NULL,
+       ends_at DATETIME NOT NULL,
+       location_url VARCHAR(500) NULL,
+       status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+       created_by BIGINT UNSIGNED NOT NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       INDEX idx_venues_status_time (status, starts_at, ends_at)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+  await query(
+    `ALTER TABLE rooms
+     ADD COLUMN IF NOT EXISTS venue_id BIGINT UNSIGNED NULL
+     AFTER sport_key`
+  );
+  await query('CREATE INDEX IF NOT EXISTS idx_rooms_venue_status ON rooms (venue_id, status)');
+  await query(
     `ALTER TABLE room_members
      ADD COLUMN IF NOT EXISTS match_preferences VARCHAR(64) NOT NULL DEFAULT 'any'
      AFTER match_preference`

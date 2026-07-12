@@ -63,6 +63,19 @@
                 <input name="password" type="password">
               </label>
             </div>
+            <section id="venueCreateBox" class="stack hide">
+              <label>
+                场地
+                <select id="venueSelect" name="venueId">
+                  <option value="">普通房间，不绑定场地</option>
+                </select>
+              </label>
+              <p id="venueCreateMeta" class="meta"></p>
+              <div id="venueRosterBox" class="stack hide">
+                <input id="registrationSearch" type="search" placeholder="搜索报名成员">
+                <div id="createRegistrationList" class="user-pick-grid"></div>
+              </div>
+            </section>
             <button type="submit">创建并进入</button>
           </form>
         </section>

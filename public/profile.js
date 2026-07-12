@@ -12,6 +12,9 @@ let profileUser = null;
 function bindProfilePage() {
   $('#profileForm').addEventListener('submit', saveProfile);
   $('#passwordForm').addEventListener('submit', changePassword);
+  $('#profileForm').avatarUrl.addEventListener('input', updateAvatarPreview);
+  $('#profileForm').displayName.addEventListener('input', updateAvatarPreview);
+  $('#profileForm').gender.addEventListener('change', updateAvatarPreview);
 }
 
 async function loadProfile() {
@@ -27,6 +30,7 @@ function renderProfile(user) {
   profileUser = {
     ...profileUser,
     displayName: user.display_name,
+    avatarUrl: user.avatar_url,
     role: user.role,
     accountType: user.account_type
   };
@@ -52,10 +56,23 @@ function renderProfile(user) {
   }
 
   const form = $('#profileForm');
+  form.avatarUrl.value = user.avatar_url || '';
   form.displayName.value = user.display_name || '';
   form.gender.value = user.gender || 'other';
   form.birthYear.value = user.birth_year || '';
   form.skillLevel.value = user.skill_level || 5;
+  updateAvatarPreview();
+}
+
+function updateAvatarPreview() {
+  const form = $('#profileForm');
+  const preview = $('#profileAvatarPreview');
+  const user = {
+    display_name: form.displayName.value || profileUser.displayName,
+    avatar_url: form.avatarUrl.value,
+    gender: form.gender.value || 'other'
+  };
+  preview.outerHTML = avatarHtml(user, 'large').replace('<div class="avatar', '<div id="profileAvatarPreview" class="avatar');
 }
 
 async function saveProfile(event) {
