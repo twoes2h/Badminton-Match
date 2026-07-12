@@ -1,4 +1,5 @@
 const assert = require('assert');
+const { pool } = require('../src/db');
 const { resolveWinner, calculateRatingDeltas } = require('../src/services/results');
 
 function player(userId, team, rating = 1000) {
@@ -83,4 +84,11 @@ function result(userId, fields) {
   assert.ok(deltas[0].delta > 0);
 }
 
-console.log('results tests passed');
+pool.end()
+  .then(() => {
+    console.log('results tests passed');
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
