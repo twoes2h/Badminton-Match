@@ -189,7 +189,7 @@ function renderRoomItem(room) {
   const isOwner = Number(room.owner_user_id) === Number(pageUser.id);
   const adminGuest = pageUser.role === 'admin' && !isOwner;
   return `
-    <article class="item">
+    <article class="item room-list-item ${isVenueRoom ? 'venue-room-item' : 'standard-room-item'}">
       <div class="item-head">
         <div>
           <strong>${escapeHtml(room.name)}</strong>

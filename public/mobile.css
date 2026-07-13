@@ -408,7 +408,7 @@ h3 {
 
 .admin-user-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 64px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 7px;
   margin-top: 2px;
@@ -421,9 +421,9 @@ h3 {
 }
 
 .admin-force-button {
-  background: var(--surface-soft);
-  color: var(--ink);
-  box-shadow: none;
+  background: var(--red);
+  color: #fff;
+  box-shadow: 0 6px 14px rgba(189, 67, 60, 0.14);
 }
 
 .avatar {
@@ -459,6 +459,11 @@ h3 {
   margin: 0;
   border-radius: 6px;
   font-size: 11px;
+}
+
+.avatar.mini.avatar-thumb img {
+  filter: blur(0.7px);
+  transform: scale(1.12);
 }
 
 .avatar.admin-avatar {
@@ -724,6 +729,17 @@ h3 {
   border-radius: 8px;
   background: var(--surface);
   padding: 12px;
+}
+
+.venue-room-item {
+  border-color: #9ccded;
+  background: linear-gradient(180deg, #eef8ff 0%, #f8fcff 100%);
+  box-shadow: inset 4px 0 0 #64a9d6;
+}
+
+.venue-room-item .pill {
+  background: #d9efff;
+  color: #1f5f83;
 }
 
 .match-record {
@@ -992,7 +1008,7 @@ small {
   }
 
   .admin-user-actions {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 48px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
   }
 

@@ -108,10 +108,12 @@ function renderVenueInfo(venue) {
   const card = $('#venueInfoCard');
   if (!venue) {
     card.classList.add('hide');
+    card.classList.remove('venue-room-item');
     card.innerHTML = '';
     return;
   }
   card.classList.remove('hide');
+  card.classList.add('venue-room-item');
   card.innerHTML = `
     <div class="card-title">
       <h2>${escapeHtml(venue.name)}</h2>
@@ -454,7 +456,8 @@ function winnerClass(match) {
 function miniAvatarHtml(player) {
   const gender = player.gender || 'other';
   const label = player.display_name || player.username || '?';
-  return `<span class="avatar mini ${gender}">${avatarText(label)}</span>`;
+  const url = avatarUrlOf(player);
+  return `<span class="avatar mini ${url ? 'avatar-thumb' : ''} ${gender}">${url ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(label)}">` : avatarText(label)}</span>`;
 }
 
 function displayCourtNo(match) {

@@ -100,7 +100,7 @@ function renderRooms(rooms) {
 
   $('#adminRooms').innerHTML = rooms.length
     ? rooms.map((room) => `
-      <article class="item">
+      <article class="item room-list-item ${room.venue_id ? 'venue-room-item' : 'standard-room-item'}">
         <div class="item-head">
           <div>
             <strong>${escapeHtml(room.name)}</strong>
