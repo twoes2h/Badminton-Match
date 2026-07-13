@@ -10,7 +10,8 @@ const { loginCapacity, removeActiveSession, touchActiveSession } = require('../s
 const { logEvent, requestFields } = require('../logger');
 
 const router = express.Router();
-const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
+const USERNAME_MAX_LENGTH = 20;
+const USERNAME_PATTERN = new RegExp(`^[a-zA-Z0-9_\\u4e00-\\u9fa5-]{3,${USERNAME_MAX_LENGTH}}$`);
 const AVATAR_UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'avatars');
 const AVATAR_PUBLIC_PREFIX = '/uploads/avatars';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
@@ -100,7 +101,7 @@ router.post('/register', asyncRoute(async (req, res) => {
     : Number(req.body.skillLevel);
 
   if (!USERNAME_PATTERN.test(username)) {
-    return res.status(400).json({ error: '用户名需为 3-32 位，可包含中文、字母、数字、下划线或短横线' });
+    return res.status(400).json({ error: `用户名需为 3-${USERNAME_MAX_LENGTH} 位，可包含中文、字母、数字、下划线或短横线` });
   }
   if (password.length < 6) {
     return res.status(400).json({ error: '密码至少 6 位' });
@@ -363,7 +364,9 @@ router.post('/password', requireAuth, asyncRoute(async (req, res) => {
 
 router._test = {
   profileInput,
-  parseAvatarImage
+  parseAvatarImage,
+  USERNAME_MAX_LENGTH,
+  USERNAME_PATTERN
 };
 
 module.exports = router;

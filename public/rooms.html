@@ -14,15 +14,16 @@
             <h1>房间</h1>
             <p class="subtitle">创建房间或按房间号加入</p>
           </div>
-          <div id="userAction"></div>
+          <div class="top-actions">
+            <button id="announcementBtn" type="button" class="secondary hide">公告</button>
+            <div id="userAction"></div>
+          </div>
         </div>
       </header>
 
       <section id="message" class="message"></section>
-      <div class="page-actions">
-        <button id="announcementBtn" type="button" class="secondary hide">公告</button>
-      </div>
-      <section id="announcementCard" class="card announcement-card hide"></section>
+
+      <section id="announcementOverlay" class="modal-overlay hide" aria-modal="true" role="dialog"></section>
 
       <section class="grid desktop-two">
         <section class="stack">

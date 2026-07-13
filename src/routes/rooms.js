@@ -12,7 +12,8 @@ const MEMBER_STATUSES = new Set(['idle', 'waiting', 'resting', 'busy']);
 const MATCH_PREFS = new Set(['md', 'wd', 'xd', 'ms', 'ws', 'xs', 'any']);
 const MATCH_TYPE_ORDER = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 const TEMP_MEMBER_DEFAULT_PASSWORD = '000000';
-const USERNAME_PATTERN = /^[a-zA-Z0-9_\u4e00-\u9fa5-]{3,32}$/;
+const USERNAME_MAX_LENGTH = 20;
+const USERNAME_PATTERN = new RegExp(`^[a-zA-Z0-9_\\u4e00-\\u9fa5-]{3,${USERNAME_MAX_LENGTH}}$`);
 
 function sqlPlaceholders(values) {
   return values.map(() => '?').join(',');
@@ -102,7 +103,7 @@ function normalizeTemporaryMemberInput(body) {
     throw new Error('成员昵称不能为空且不能超过 80 个字符');
   }
   if (username && !USERNAME_PATTERN.test(username)) {
-    throw new Error('用户名需为 3-32 位，可包含中文、字母、数字、下划线或短横线');
+    throw new Error(`用户名需为 3-${USERNAME_MAX_LENGTH} 位，可包含中文、字母、数字、下划线或短横线`);
   }
   if (!['male', 'female', 'other'].includes(gender)) {
     throw new Error('性别参数不正确');
@@ -993,7 +994,9 @@ router._test = {
   normalizeMatchPreferences,
   normalizeMatchTypes,
   normalizeMatchDate,
-  normalizeTemporaryMemberInput
+  normalizeTemporaryMemberInput,
+  USERNAME_MAX_LENGTH,
+  USERNAME_PATTERN
 };
 
 module.exports = router;

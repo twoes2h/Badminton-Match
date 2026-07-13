@@ -22,7 +22,10 @@ function bindRoomsPage() {
   });
 
   $('#refreshRoomsBtn').addEventListener('click', () => loadRooms());
-  $('#announcementBtn').addEventListener('click', toggleAnnouncement);
+  $('#announcementBtn').addEventListener('click', () => showAnnouncement());
+  $('#announcementOverlay').addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) hideAnnouncement();
+  });
   $('#toggleCreateRoomBtn').addEventListener('click', () => {
     const form = $('#createRoomForm');
     form.classList.toggle('hide');
@@ -53,16 +56,15 @@ async function loadAnnouncement() {
     currentAnnouncement = data.announcement;
     if (!currentAnnouncement) {
       $('#announcementBtn').classList.add('hide');
-      $('#announcementCard').classList.add('hide');
+      hideAnnouncement();
       return;
     }
 
     $('#announcementBtn').classList.remove('hide');
-    renderAnnouncementCard();
+    renderAnnouncementModal();
     const seenKey = announcementSeenKey(currentAnnouncement);
     if (window.localStorage.getItem(seenKey) !== '1') {
-      $('#announcementCard').classList.remove('hide');
-      window.localStorage.setItem(seenKey, '1');
+      showAnnouncement();
     }
   } catch (error) {
     showMessage(error.message);
@@ -73,24 +75,31 @@ function announcementSeenKey(announcement) {
   return `badminton-announcement:${announcement.id}:${announcement.updated_at}`;
 }
 
-function renderAnnouncementCard() {
-  $('#announcementCard').innerHTML = `
-    <div class="card-title">
+function renderAnnouncementModal() {
+  $('#announcementOverlay').innerHTML = `
+    <div class="card announcement-modal">
+      <div class="card-title">
       <h2>${escapeHtml(currentAnnouncement.title || '公告')}</h2>
-      <button id="closeAnnouncementBtn" type="button" class="secondary">收起</button>
+        <button id="closeAnnouncementBtn" type="button" class="secondary">关闭</button>
+      </div>
+      <p>${escapeHtml(currentAnnouncement.body || '').replace(/\n/g, '<br>')}</p>
     </div>
-    <p>${escapeHtml(currentAnnouncement.body || '').replace(/\n/g, '<br>')}</p>
   `;
   $('#closeAnnouncementBtn').addEventListener('click', () => {
-    $('#announcementCard').classList.add('hide');
+    hideAnnouncement();
   });
 }
 
-function toggleAnnouncement() {
+function showAnnouncement() {
   if (!currentAnnouncement) return;
-  renderAnnouncementCard();
-  $('#announcementCard').classList.toggle('hide');
+  renderAnnouncementModal();
+  $('#announcementOverlay').classList.remove('hide');
   window.localStorage.setItem(announcementSeenKey(currentAnnouncement), '1');
+}
+
+function hideAnnouncement() {
+  const overlay = $('#announcementOverlay');
+  if (overlay) overlay.classList.add('hide');
 }
 
 async function loadCreateOptions() {

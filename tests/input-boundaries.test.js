@@ -14,10 +14,17 @@ assert.strictEqual(rooms.normalizeMatchDate('2026-7-13'), null);
 
 assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: '' }), /不能为空/);
 assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: 'a', username: 'x' }), /用户名/);
+assert.strictEqual(rooms.normalizeTemporaryMemberInput({ displayName: 'a'.repeat(80), username: 'u'.repeat(20) }).username, 'u'.repeat(20));
+assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: 'a'.repeat(81), username: 'user123' }), /昵称/);
+assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: 'a', username: 'u'.repeat(21) }), /用户名/);
 assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: 'a', skillLevel: 0 }), /技术等级/);
 assert.throws(() => rooms.normalizeTemporaryMemberInput({ displayName: 'a', skillLevel: 11 }), /技术等级/);
 assert.strictEqual(rooms.normalizeTemporaryMemberInput({ displayName: 'a', rating: -99 }).rating, 0);
 assert.strictEqual(rooms.normalizeTemporaryMemberInput({ displayName: 'a', rating: 9999 }).rating, 3000);
+assert.strictEqual(rooms.USERNAME_MAX_LENGTH, 20);
+assert.strictEqual(auth.USERNAME_MAX_LENGTH, 20);
+assert.strictEqual(auth.USERNAME_PATTERN.test('u'.repeat(20)), true);
+assert.strictEqual(auth.USERNAME_PATTERN.test('u'.repeat(21)), false);
 
 assert.throws(() => auth.profileInput({ displayName: '', gender: 'male', skillLevel: 5 }), /昵称/);
 assert.throws(() => auth.profileInput({ displayName: 'a', gender: 'bad', skillLevel: 5 }), /性别/);

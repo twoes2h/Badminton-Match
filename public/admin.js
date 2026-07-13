@@ -246,14 +246,12 @@ function renderUsers(users) {
 }
 
 function renderUserCard(user) {
-  const tags = [
+  const statusLine = [
+    user.username,
+    user.is_blacklisted ? '已限制登录' : '可登录',
     user.role === 'admin' ? '管理员' : '',
-    user.account_type === 'temporary' ? '临时' : '',
-    user.is_blacklisted ? '已拉黑' : ''
+    user.account_type === 'temporary' ? '临时' : ''
   ].filter(Boolean);
-  const accountType = user.account_type === 'temporary' ? '临时' : '普通';
-  const roleLabel = user.role === 'admin' ? '管理员' : '普通成员';
-  const lockLabel = user.is_blacklisted ? '已限制登录' : '可登录';
   const self = Number(user.id) === Number(adminUser.id);
 
   return `
@@ -262,10 +260,9 @@ function renderUserCard(user) {
       <div class="admin-user-body">
         <div>
           <strong>${escapeHtml(user.display_name)} ${ratingBadgeHtml(user.rating)}</strong>
-          <p class="meta">${escapeHtml(user.username)} · ${lockLabel} · ${roleLabel}${user.account_type === 'temporary' ? ' · 临时' : ''}</p>
+          <p class="meta">${statusLine.map(escapeHtml).join(' · ')}</p>
         </div>
         <p class="admin-user-info">技术 ${user.skill_level}　积分 ${user.rating} · ${GenderLabels[user.gender] || '其他'}</p>
-        <p class="meta">${tags.length ? tags.join(' · ') : `类型：${accountType}`}</p>
         <div class="admin-user-actions">
           <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${self ? 'disabled' : ''}>
             ${user.role === 'admin' ? '取消管理' : '任命管理'}
@@ -273,7 +270,7 @@ function renderUserCard(user) {
           <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
             ${user.is_blacklisted ? '解除拉黑' : '拉黑'}
           </button>
-          <button type="button" class="admin-force-button" title="强制下线" aria-label="强制下线" data-force-logout="${user.id}" ${self ? 'disabled' : ''}>×</button>
+          <button type="button" class="admin-force-button" data-force-logout="${user.id}" ${self ? 'disabled' : ''}>下线</button>
         </div>
       </div>
     </article>

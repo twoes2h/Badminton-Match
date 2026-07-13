@@ -280,7 +280,7 @@ function renderMemberCard(member) {
         </div>
         <p class="member-card-info">等级 ${member.skill_level} · ${presence}${tags.length ? ` · ${tags.join(' · ')}` : ''}</p>
         <p class="member-card-info">积分 ${member.rating} · ${GenderLabels[member.gender] || member.gender}</p>
-        ${member.account_type === 'temporary' && member.username ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
+        ${member.account_type === 'temporary' && member.username ? `<p class="member-username">用户名：${escapeHtml(member.username)}</p>` : ''}
         <div class="member-card-actions">
           ${pageUser.role === 'admin' ? memberStatusSelect(member) : `<span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>`}
           ${canManageMembers && roomPayload.room.venue_id ? `
