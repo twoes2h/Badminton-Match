@@ -41,6 +41,11 @@ function bindRoomPage() {
   $('#leaveRoomBtn').addEventListener('click', leaveRoom);
   $('#dissolveRoomBtn').addEventListener('click', dissolveCurrentRoom);
   $('#refreshRoomBtn').addEventListener('click', loadRoom);
+  $('#matchDateFilter').addEventListener('change', loadRoom);
+  $('#clearMatchDateBtn').addEventListener('click', () => {
+    $('#matchDateFilter').value = '';
+    loadRoom();
+  });
 }
 
 function connectRoomSocket() {
@@ -54,7 +59,9 @@ function connectRoomSocket() {
 
 async function loadRoom() {
   try {
-    roomPayload = await api(`/api/rooms/${roomId}`);
+    const matchDate = $('#matchDateFilter') ? $('#matchDateFilter').value : '';
+    const suffix = matchDate ? `?matchDate=${encodeURIComponent(matchDate)}` : '';
+    roomPayload = await api(`/api/rooms/${roomId}${suffix}`);
     if (canManageVenueRoster(roomPayload)) {
       await ensureManagementOptions();
     }
@@ -337,8 +344,15 @@ async function removeRoomRegistration(userId) {
 }
 
 function renderMatches(matches) {
-  $('#matchList').innerHTML = matches.length
-    ? matches.map(renderMatchCard).join('')
+  const groups = groupMatchesByDay(matches);
+  const selectedDate = $('#matchDateFilter') ? $('#matchDateFilter').value : '';
+  $('#matchList').innerHTML = groups.length
+    ? groups.map(([dayKey, dayMatches], index) => `
+      <details class="month-group match-day" ${shouldOpenMatchGroup(dayKey, index, selectedDate) ? 'open' : ''}>
+        <summary>${formatMatchDayTitle(dayKey)} · ${dayMatches.length} 场</summary>
+        <div class="list">${dayMatches.map(renderMatchCard).join('')}</div>
+      </details>
+    `).join('')
     : '<p class="muted">暂无比赛。</p>';
 
   $$('[data-finish-match]').forEach((button) => {
@@ -380,7 +394,7 @@ function renderMatchCard(match) {
       <div class="item-head">
         <div>
           <strong>${escapeHtml(match.label || MatchLabels[match.match_type])}${match.court_no ? ` · ${match.court_no} 号场` : ''}</strong>
-          <p class="meta">第 ${match.round_no || 1} 轮</p>
+          <p class="meta">第 ${match.round_no || 1} 轮 · ${formatMatchTiming(match)}</p>
         </div>
         <span class="pill ${match.status}">${resultText}</span>
       </div>
@@ -452,6 +466,82 @@ function updateResultScoreFields(form) {
   const fields = $('[data-score-fields]', form);
   if (!mode || !fields) return;
   fields.classList.toggle('hide', mode.value !== 'score');
+}
+
+function groupMatchesByDay(matches) {
+  const groups = new Map();
+  for (const match of matches) {
+    const key = matchDayKey(match.started_at);
+    const list = groups.get(key) || [];
+    list.push(match);
+    groups.set(key, list);
+  }
+  return [...groups.entries()];
+}
+
+function shouldOpenMatchGroup(dayKey, index, selectedDate) {
+  if (selectedDate) return dayKey === selectedDate || index === 0;
+  return index === 0 || dayKey === matchDayKey(new Date());
+}
+
+function matchDayKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知日期';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatMatchDayTitle(dayKey) {
+  if (dayKey === '未知日期') return dayKey;
+  const date = new Date(`${dayKey}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dayKey;
+  const label = date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short'
+  });
+  if (dayKey === matchDayKey(new Date())) return `${label} · 今天`;
+  return label;
+}
+
+function formatMatchTiming(match) {
+  if (!match || !match.started_at) return '时间未知';
+  const start = new Date(match.started_at);
+  if (Number.isNaN(start.getTime())) return '时间未知';
+  const endValue = match.ended_at || match.finalized_at;
+  const parts = [`匹配 ${formatMatchTime(match.started_at)}`];
+  if (endValue) {
+    const end = new Date(endValue);
+    if (!Number.isNaN(end.getTime())) {
+      parts.push(`结束 ${formatMatchTime(endValue)}`);
+      parts.push(`用时 ${formatDuration(end.getTime() - start.getTime())}`);
+    }
+  } else if (match.status === 'active') {
+    parts.push(`已进行 ${formatDuration(Date.now() - start.getTime())}`);
+  }
+  return parts.join(' · ');
+}
+
+function formatMatchTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function formatDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return '-';
+  const totalMinutes = Math.max(1, Math.round(Math.max(0, milliseconds) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (!hours) return `${totalMinutes}分钟`;
+  return minutes ? `${hours}小时${minutes}分钟` : `${hours}小时`;
 }
 
 function formatVenueRange(venue) {

@@ -66,6 +66,11 @@ function normalizeMatchTypes(value) {
   return cleaned.filter((item) => MATCH_TYPES[item]);
 }
 
+function normalizeMatchDate(value) {
+  const text = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
 function makeRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -232,7 +237,8 @@ async function dissolveRoom(conn, roomId) {
   );
 }
 
-async function getRoomPayload(roomId, userId) {
+async function getRoomPayload(roomId, userId, options = {}) {
+  const matchDate = normalizeMatchDate(options.matchDate);
   const roomRows = await query('SELECT * FROM rooms WHERE id = ? LIMIT 1', [roomId]);
   const room = roomRows[0];
   if (!room || room.status !== 'active') throw new Error('房间不存在或已解散');
@@ -274,14 +280,23 @@ async function getRoomPayload(roomId, userId) {
       throw new Error('你不在这个场地房间的报名名单中');
     }
   }
+  const matchParams = [roomId];
+  let matchWhere = 'room_id = ?';
+  let matchLimit = 100;
+  if (matchDate) {
+    matchWhere += ' AND started_at >= ? AND started_at < DATE_ADD(?, INTERVAL 1 DAY)';
+    matchParams.push(matchDate, matchDate);
+    matchLimit = 200;
+  } else {
+    matchWhere += " AND (status IN ('active','awaiting_result') OR started_at >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
+  }
   const matches = await query(
     `SELECT *
      FROM matches
-     WHERE room_id = ?
-       AND (status IN ('active','awaiting_result') OR started_at >= DATE_SUB(NOW(), INTERVAL 30 DAY))
+     WHERE ${matchWhere}
      ORDER BY started_at DESC
-     LIMIT 100`,
-    [roomId]
+     LIMIT ${matchLimit}`,
+    matchParams
   );
   const matchIds = matches.map((match) => Number(match.id));
   const players = matchIds.length
@@ -325,6 +340,7 @@ async function getRoomPayload(roomId, userId) {
       label: MATCH_TYPES[match.match_type] && MATCH_TYPES[match.match_type].label,
       players: playersByMatch.get(Number(match.id)) || []
     })),
+    matchDate,
     matchTypes: MATCH_TYPES
   };
 }
@@ -691,7 +707,9 @@ router.delete('/:roomId/registrations/:userId', requireAuth, asyncRoute(async (r
 }));
 
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
-  const payload = await getRoomPayload(Number(req.params.roomId), req.session.user.id);
+  const payload = await getRoomPayload(Number(req.params.roomId), req.session.user.id, {
+    matchDate: req.query.matchDate
+  });
   res.json(payload);
 }));
 

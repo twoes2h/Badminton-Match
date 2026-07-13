@@ -393,6 +393,18 @@ h3 {
   white-space: nowrap;
 }
 
+.match-filter {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.match-filter button {
+  min-width: 72px;
+}
+
 .month-group {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -600,5 +612,9 @@ small {
   .team.red {
     border-right: 0;
     border-bottom: 1px solid #efd2ce;
+  }
+
+  .match-filter {
+    grid-template-columns: 1fr;
   }
 }

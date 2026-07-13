@@ -353,9 +353,17 @@ async function createMatch(conn, { roomId, matchType, teams, createdBy, courtNo 
   };
 }
 
+async function nextRoundNo(conn, roomId, mode = 'round') {
+  const sql = mode === 'free'
+    ? 'SELECT COUNT(*) + 1 AS next_round FROM matches WHERE room_id = ?'
+    : 'SELECT COALESCE(MAX(round_no), 0) + 1 AS next_round FROM matches WHERE room_id = ?';
+  const rows = await conn.query(sql, [roomId]);
+  return Number(rows[0].next_round || 1);
+}
+
 async function createFreeMatch({ roomId, matchType, createdBy }) {
   return transaction(async (conn) => {
-    await assertRoomActive(conn, roomId);
+    const room = await assertRoomActive(conn, roomId);
     const matchTypes = Array.isArray(matchType) ? matchType : [matchType];
     const validTypes = [...new Set(matchTypes)].filter((type) => MATCH_TYPES[type]);
     if (validTypes.length === 0) {
@@ -365,11 +373,13 @@ async function createFreeMatch({ roomId, matchType, createdBy }) {
     for (const type of validTypes) {
       const best = await selectBestMatch(conn, roomId, type);
       if (best) {
+        const roundNo = await nextRoundNo(conn, roomId, room.mode);
         return createMatch(conn, {
           roomId,
           matchType: type,
           teams: best,
-          createdBy
+          createdBy,
+          roundNo
         });
       }
     }
@@ -387,11 +397,7 @@ async function createRoundMatches({ roomId, courtModes, createdBy }) {
       throw new Error('请至少选择一个场地的匹配方式');
     }
 
-    const maxRoundRows = await conn.query(
-      'SELECT COALESCE(MAX(round_no), 0) + 1 AS next_round FROM matches WHERE room_id = ?',
-      [roomId]
-    );
-    const roundNo = Number(maxRoundRows[0].next_round || 1);
+    const roundNo = await nextRoundNo(conn, roomId);
     const roundEligibleIds = new Set(await loadEligibleMemberIds(conn, roomId));
     const excludedIds = new Set();
     const matches = [];
