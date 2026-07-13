@@ -248,24 +248,30 @@ function renderUserCard(user) {
     user.account_type === 'temporary' ? '临时' : '',
     user.is_blacklisted ? '已拉黑' : ''
   ].filter(Boolean);
+  const accountType = user.account_type === 'temporary' ? '临时' : '普通';
+  const roleLabel = user.role === 'admin' ? '管理员' : '普通成员';
+  const lockLabel = user.is_blacklisted ? '已限制登录' : '可登录';
 
   return `
-    <article class="user-card ${user.is_blacklisted ? 'is-locked' : ''}">
-      ${avatarHtml(user)}
-      <strong>${escapeHtml(user.display_name)}</strong>
-      <p class="meta">${escapeHtml(user.username)}</p>
-      <div class="user-card-meta">
-        <span>${GenderLabels[user.gender] || '其他'}</span>
-        <span>Lv.${user.skill_level}</span>
-        <span>${user.rating}分</span>
+    <article class="admin-user-card ${user.is_blacklisted ? 'is-locked' : ''}">
+      ${avatarHtml(user, 'admin-avatar')}
+      <div class="admin-user-body">
+        <div>
+          <strong>${escapeHtml(user.display_name)} ${ratingBadgeHtml(user.rating)}</strong>
+          <p class="meta">${escapeHtml(user.username)} · ${lockLabel}</p>
+        </div>
+        <p class="admin-user-info">积分等级 ${user.rating} · ${GenderLabels[user.gender] || '其他'}</p>
+        <p class="admin-user-info">技术等级 ${user.skill_level} · 类型：${accountType}、${roleLabel}</p>
+        ${tags.length ? `<p class="meta">${tags.join(' · ')}</p>` : '<p class="meta">正常</p>'}
+        <div class="admin-user-actions">
+          <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${Number(user.id) === Number(adminUser.id) ? 'disabled' : ''}>
+            ${user.role === 'admin' ? '取消管理' : '任命管理'}
+          </button>
+          <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
+            ${user.is_blacklisted ? '解除拉黑' : '拉黑'}
+          </button>
+        </div>
       </div>
-      ${tags.length ? `<p class="meta">${tags.join(' · ')}</p>` : '<p class="meta">正常</p>'}
-      <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${Number(user.id) === Number(adminUser.id) ? 'disabled' : ''}>
-        ${user.role === 'admin' ? '取消管理' : '任命管理'}
-      </button>
-      <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
-        ${user.is_blacklisted ? '解除' : '拉黑'}
-      </button>
     </article>
   `;
 }

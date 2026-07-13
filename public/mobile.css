@@ -338,48 +338,57 @@ h3 {
   gap: 10px;
 }
 
-.user-grid {
+.admin-user-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
   margin-top: 12px;
 }
 
-.user-card {
-  min-height: 176px;
+.admin-user-card {
   display: grid;
-  align-content: start;
-  gap: 6px;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  padding: 10px;
-  text-align: center;
+  padding: 14px;
 }
 
-.user-card.is-locked {
+.admin-user-card.is-locked {
   background: #fff8f7;
   border-color: #edc8c3;
 }
 
-.user-card strong,
-.user-card .meta {
+.admin-user-body {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.admin-user-body strong,
+.admin-user-body .meta,
+.admin-user-info {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.user-card button {
-  min-height: 36px;
-  padding: 7px 10px;
+.admin-user-info {
+  color: var(--ink);
+  font-size: 13px;
 }
 
-.user-card-meta {
+.admin-user-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  font-size: 11px;
-  color: var(--muted);
+  grid-template-columns: repeat(2, minmax(0, 110px));
+  gap: 8px;
+}
+
+.admin-user-actions button {
+  min-height: 44px;
+  padding: 8px 10px;
 }
 
 .avatar {
@@ -409,11 +418,28 @@ h3 {
   font-size: 15px;
 }
 
-.avatar.member-avatar {
-  width: 56px;
-  height: 56px;
+.avatar.mini {
+  width: 24px;
+  height: 24px;
   margin: 0;
-  font-size: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.avatar.admin-avatar {
+  width: 118px;
+  height: 118px;
+  margin: 0;
+  border-radius: 18px;
+  font-size: 30px;
+}
+
+.avatar.member-avatar {
+  width: clamp(104px, 28vw, 132px);
+  height: clamp(104px, 28vw, 132px);
+  margin: 0;
+  border-radius: 18px;
+  font-size: 30px;
 }
 
 .avatar.large {
@@ -458,19 +484,19 @@ h3 {
 
 .member-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
 }
 
 .member-card {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 10px;
-  align-items: start;
+  grid-template-columns: clamp(104px, 28vw, 132px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  padding: 10px;
+  padding: 14px;
 }
 
 .member-card-body {
@@ -494,6 +520,56 @@ h3 {
   display: grid;
   gap: 8px;
   margin-top: 4px;
+}
+
+.member-card-info {
+  color: var(--ink);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.member-status-pill {
+  display: inline-flex;
+  min-width: 104px;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--brand);
+  border-radius: 6px;
+  background: #f7fbff;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.member-status-pill.waiting {
+  border-color: #95d5b2;
+  background: #e9f8ef;
+}
+
+.member-status-pill.resting {
+  border-color: #edc47e;
+  background: #fff4dd;
+}
+
+.member-status-pill.busy,
+.member-status-pill.locked {
+  border-color: #e1a09a;
+  background: #fff0ee;
+}
+
+.member-status-pill.in_match,
+.member-status-pill.awaiting_result {
+  border-color: #9bbbe6;
+  background: #edf5ff;
 }
 
 .rating-badge {
@@ -589,6 +665,11 @@ h3 {
 
 .match-record {
   background: #fbfdff;
+}
+
+.match-record.is-mine {
+  background: #fff9df;
+  border-color: #ead487;
 }
 
 .item-head {
@@ -714,16 +795,43 @@ small {
 .team {
   padding: 12px;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .team.red {
-  background: #fff6f4;
-  border-right: 1px solid #efd2ce;
+  background: #ffe6e0;
+  border-right: 1px solid #eab9b0;
 }
 
 .team.blue {
-  background: #f4f8ff;
+  background: #e4efff;
+}
+
+.match-player {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.match-player.is-mine {
+  background: #fff0b8;
+}
+
+.match-player strong,
+.match-player small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-player.is-mine strong {
+  font-weight: 900;
 }
 
 .result-form {
@@ -776,6 +884,27 @@ small {
   .two,
   .team-board {
     grid-template-columns: 1fr;
+  }
+
+  .admin-user-grid,
+  .member-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-user-card {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .avatar.admin-avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 16px;
+  }
+
+  .admin-user-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .compact-search .row {

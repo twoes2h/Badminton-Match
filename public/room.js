@@ -247,15 +247,14 @@ function renderMembers(members) {
       <div class="member-card-body">
         <div class="member-card-head">
           <strong>${escapeHtml(member.display_name)} ${ratingBadgeHtml(member.rating)}</strong>
-          <div class="row wrap">
-            ${member.account_type === 'temporary' ? '<span class="pill resting">临时</span>' : ''}
-            <span class="pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
-          </div>
+          <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
         </div>
-        <p class="meta">${GenderLabels[member.gender] || member.gender} · Lv.${member.skill_level} · ${member.rating} 分</p>
+        <p class="member-card-info">积分 ${member.rating} · ${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level}</p>
+        <p class="member-card-info">${member.presence_status === 'online' ? '在线' : '离线'}${member.account_type === 'temporary' ? ' · 临时' : ''}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
         ${member.account_type === 'temporary' && member.username ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
-        <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
-        <p class="meta">${member.presence_status === 'online' ? '在线' : '离线'}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
+        <div class="member-status-row">
+          <span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
+        </div>
         <div class="member-card-actions">
           ${pageUser.role === 'admin' ? `
             <label>
@@ -372,6 +371,7 @@ function renderMatchCard(match) {
   const red = match.players.filter((player) => player.team === 'red');
   const blue = match.players.filter((player) => player.team === 'blue');
   const me = match.players.find((player) => Number(player.user_id) === pageUser.id);
+  const isMine = Boolean(me);
   const room = roomPayload && roomPayload.room;
   const isOwner = room && Number(room.owner_user_id) === pageUser.id;
   const allTemporary = match.players.length > 0 && match.players.every((player) => player.account_type === 'temporary');
@@ -388,21 +388,19 @@ function renderMatchCard(match) {
       : StatusLabels[match.status] || match.status;
 
   return `
-    <article class="item match-record">
+    <article class="item match-record ${isMine ? 'is-mine' : ''}">
       <div class="item-head">
         <div>
-          <strong>${escapeHtml(match.label || MatchLabels[match.match_type])}${match.court_no ? ` · ${match.court_no} 号场` : ''}</strong>
+          <strong>${displayCourtNo(match) ? `${displayCourtNo(match)} 号场 · ` : ''}${escapeHtml(match.label || MatchLabels[match.match_type])}</strong>
           <p class="meta">第 ${match.round_no || 1} 轮 · ${formatMatchTiming(match)}</p>
         </div>
         <span class="pill ${match.status}">${resultText}</span>
       </div>
       <div class="team-board">
         <div class="team red">
-          <strong>红方</strong>
           ${red.map(playerLine).join('')}
         </div>
         <div class="team blue">
-          <strong>蓝方</strong>
           ${blue.map(playerLine).join('')}
         </div>
       </div>
@@ -421,7 +419,31 @@ function renderMatchCard(match) {
 }
 
 function playerLine(player) {
-  return `<span>${escapeHtml(player.display_name)} ${ratingBadgeHtml(player.rating_before)} <small>${player.rating_before}${player.account_type === 'temporary' ? ' · 临时' : ''}${player.result_submitted ? ' · 已交' : ''}</small></span>`;
+  const isMine = Number(player.user_id) === pageUser.id;
+  return `
+    <div class="match-player ${isMine ? 'is-mine' : ''}">
+      ${miniAvatarHtml(player)}
+      <div>
+        <strong>${escapeHtml(player.display_name)} ${ratingBadgeHtml(player.rating_before)}</strong>
+        <small>${player.rating_before}${player.account_type === 'temporary' ? ' · 临时' : ''}${player.result_submitted ? ' · 已交' : ''}</small>
+      </div>
+    </div>
+  `;
+}
+
+function miniAvatarHtml(player) {
+  const gender = player.gender || 'other';
+  const label = player.display_name || player.username || '?';
+  return `<span class="avatar mini ${gender}">${avatarText(label)}</span>`;
+}
+
+function displayCourtNo(match) {
+  if (match.court_no) return Number(match.court_no);
+  const room = roomPayload && roomPayload.room;
+  const courtCount = Number(room && room.court_count);
+  if (!courtCount || courtCount < 1) return null;
+  const roundNo = Math.max(1, Number(match.round_no || 1));
+  return ((roundNo - 1) % courtCount) + 1;
 }
 
 function resultForm(matchId, options = {}) {

@@ -353,6 +353,30 @@ async function createMatch(conn, { roomId, matchType, teams, createdBy, courtNo 
   };
 }
 
+async function nextAvailableCourtNo(conn, roomId, courtCount) {
+  const totalCourts = Math.max(1, Number(courtCount || 1));
+  const activeRows = await conn.query(
+    `SELECT court_no
+     FROM matches
+     WHERE room_id = ?
+       AND status IN ('active','awaiting_result')`,
+    [roomId]
+  );
+  if (activeRows.length >= totalCourts) {
+    throw new Error('当前没有空闲场地，请等待已有比赛结束');
+  }
+
+  const occupied = new Set(
+    activeRows
+      .map((row) => Number(row.court_no))
+      .filter((courtNo) => courtNo >= 1 && courtNo <= totalCourts)
+  );
+  for (let courtNo = 1; courtNo <= totalCourts; courtNo += 1) {
+    if (!occupied.has(courtNo)) return courtNo;
+  }
+  return (activeRows.length % totalCourts) + 1;
+}
+
 async function nextRoundNo(conn, roomId, mode = 'round') {
   const sql = mode === 'free'
     ? 'SELECT COUNT(*) + 1 AS next_round FROM matches WHERE room_id = ?'
@@ -374,11 +398,13 @@ async function createFreeMatch({ roomId, matchType, createdBy }) {
       const best = await selectBestMatch(conn, roomId, type);
       if (best) {
         const roundNo = await nextRoundNo(conn, roomId, room.mode);
+        const courtNo = await nextAvailableCourtNo(conn, roomId, room.court_count);
         return createMatch(conn, {
           roomId,
           matchType: type,
           teams: best,
           createdBy,
+          courtNo,
           roundNo
         });
       }
