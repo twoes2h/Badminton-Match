@@ -730,11 +730,6 @@ h3 {
   background: #fbfdff;
 }
 
-.match-record.is-mine {
-  background: #fff9df;
-  border-color: #ead487;
-}
-
 .item-head {
   display: flex;
   justify-content: space-between;
@@ -789,6 +784,27 @@ small {
 .pill.invalid,
 .pill.cancelled {
   background: #f5dfdc;
+  color: var(--red);
+}
+
+.pill.winner-red {
+  background: #d76b63;
+  color: #fff;
+}
+
+.pill.winner-blue {
+  background: #5d87cf;
+  color: #fff;
+}
+
+.pill.winner-draw {
+  background: #e7edf3;
+  color: var(--ink);
+}
+
+.pill.winner-terminated,
+.pill.winner-invalid {
+  background: #f0d6d2;
   color: var(--red);
 }
 
@@ -862,12 +878,12 @@ small {
 }
 
 .team.red {
-  background: #ffe6e0;
-  border-right: 1px solid #eab9b0;
+  background: #ffd6cf;
+  border-right: 1px solid #df9e94;
 }
 
 .team.blue {
-  background: #e4efff;
+  background: #d5e4ff;
 }
 
 .match-player {
@@ -881,10 +897,6 @@ small {
   background: rgba(255, 255, 255, 0.56);
 }
 
-.match-player.is-mine {
-  background: #fff0b8;
-}
-
 .match-player strong,
 .match-player small {
   display: block;
@@ -895,6 +907,7 @@ small {
 
 .match-player.is-mine strong {
   font-weight: 900;
+  color: #cf5f58;
 }
 
 .result-form {

@@ -398,13 +398,13 @@ function renderMatchCard(match) {
       : StatusLabels[match.status] || match.status;
 
   return `
-    <article class="item match-record ${isMine ? 'is-mine' : ''}">
+    <article class="item match-record">
       <div class="item-head">
         <div>
           <strong>${displayCourtNo(match) ? `${displayCourtNo(match)} 号场 · ` : ''}${escapeHtml(match.label || MatchLabels[match.match_type])}</strong>
           <p class="meta">第 ${match.round_no || 1} 轮 · ${formatMatchTiming(match)}</p>
         </div>
-        <span class="pill ${match.status}">${resultText}</span>
+        <span class="pill ${match.status} ${winnerClass(match)}">${resultText}</span>
       </div>
       <div class="team-board">
         <div class="team red">
@@ -439,6 +439,16 @@ function playerLine(player) {
       </div>
     </div>
   `;
+}
+
+function winnerClass(match) {
+  return {
+    red: 'winner-red',
+    blue: 'winner-blue',
+    draw: 'winner-draw',
+    terminated: 'winner-terminated',
+    invalid: 'winner-invalid'
+  }[match.result_winner] || '';
 }
 
 function miniAvatarHtml(player) {
