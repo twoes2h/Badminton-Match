@@ -187,7 +187,7 @@ async function loadRooms(q = '') {
 function renderRoomItem(room) {
   const isVenueRoom = Boolean(room.venue_id);
   const isOwner = Number(room.owner_user_id) === Number(pageUser.id);
-  const adminGuest = pageUser.role === 'admin' && !isOwner;
+  const adminManager = pageUser.role === 'admin' && (isVenueRoom || !isOwner);
   return `
     <article class="item room-list-item ${isVenueRoom ? 'venue-room-item' : 'standard-room-item'}">
       <div class="item-head">
@@ -203,7 +203,7 @@ function renderRoomItem(room) {
         ${room.venue_location_url ? `<a class="button secondary" href="${escapeHtml(room.venue_location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
       ` : ''}
       <p class="message room-card-message" data-room-message="${room.id}"></p>
-      ${adminGuest
+      ${adminManager
         ? `<button type="button" data-join-room="${room.id}" data-has-password="0">管理房间</button>`
         : `<button type="button" data-join-room="${room.id}" data-has-password="${Number(room.has_password) === 1 ? '1' : '0'}">进入房间</button>`}
     </article>
