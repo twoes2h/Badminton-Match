@@ -583,16 +583,26 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
 
   const result = await transaction(async (conn) => {
     const found = await assertActiveRoom(conn, roomId);
-    const isAdminGuest = req.session.user.role === 'admin'
-      && Number(found.owner_user_id) !== Number(req.session.user.id);
+    const isAdmin = req.session.user.role === 'admin';
+    const isOwner = Number(found.owner_user_id) === Number(req.session.user.id);
+    const isAdminGuest = isAdmin && !isOwner;
 
-    if (found.password_hash && !isAdminGuest && !(await bcrypt.compare(password, found.password_hash))) {
+    if (found.password_hash && !isAdmin && !(await bcrypt.compare(password, found.password_hash))) {
       throw new Error('房间密码错误');
     }
 
+    const existingRows = await conn.query(
+      'SELECT * FROM room_members WHERE room_id = ? AND user_id = ? LIMIT 1',
+      [roomId, req.session.user.id]
+    );
+    const isVenueOwnerManager = isAdmin && isOwner && found.venue_id && !existingRows[0];
     if (isAdminGuest) {
       const changedRoomIds = await releaseAdminGuestMemberships(conn, req.session.user.id, roomId);
       return { room: found, changedRoomIds };
+    }
+    if (isVenueOwnerManager) {
+      const changedRoomIds = await releaseAdminGuestMemberships(conn, req.session.user.id, roomId);
+      return { room: found, changedRoomIds: [roomId, ...changedRoomIds] };
     }
 
     const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
@@ -600,10 +610,6 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
       throw new Error(`你已经在房间 ${activeRoom.name} 中，一个人只能同时进入一个房间`);
     }
 
-    const existingRows = await conn.query(
-      'SELECT * FROM room_members WHERE room_id = ? AND user_id = ? LIMIT 1',
-      [roomId, req.session.user.id]
-    );
     if (found.venue_id && !existingRows[0]) {
       throw new Error('你不在这个场地房间的报名名单中');
     }

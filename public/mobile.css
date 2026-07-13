@@ -742,6 +742,10 @@ h3 {
   color: #1f5f83;
 }
 
+.room-card-message {
+  margin: 0;
+}
+
 .match-record {
   background: #fbfdff;
 }

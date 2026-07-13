@@ -202,6 +202,7 @@ function renderRoomItem(room) {
         <p class="meta">${escapeHtml(room.venue_name || '')} · ${formatVenueRange({ starts_at: room.venue_starts_at, ends_at: room.venue_ends_at })}</p>
         ${room.venue_location_url ? `<a class="button secondary" href="${escapeHtml(room.venue_location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
       ` : ''}
+      <p class="message room-card-message" data-room-message="${room.id}"></p>
       ${adminGuest
         ? `<button type="button" data-join-room="${room.id}" data-has-password="0">管理房间</button>`
         : `<button type="button" data-join-room="${room.id}" data-has-password="${Number(room.has_password) === 1 ? '1' : '0'}">进入房间</button>`}
@@ -218,7 +219,25 @@ async function joinRoom(roomId, hasPassword) {
     });
     window.location.href = `/room.html?id=${roomId}`;
   } catch (error) {
-    showMessage(error.message);
+    showRoomMessage(roomId, error.message);
+  }
+}
+
+function showRoomMessage(roomId, text) {
+  const roomIdText = String(roomId);
+  const box = $$('[data-room-message]').find((element) => element.dataset.roomMessage === roomIdText);
+  if (!box) {
+    showMessage(text);
+    return;
+  }
+
+  box.textContent = text || '';
+  box.classList.toggle('show', Boolean(text));
+  showRoomMessage.timers = showRoomMessage.timers || new Map();
+  window.clearTimeout(showRoomMessage.timers.get(roomIdText));
+  if (text) {
+    showRoomMessage.timers.set(roomIdText, window.setTimeout(() => showRoomMessage(roomIdText, ''), 5200));
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 }
 
