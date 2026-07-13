@@ -258,14 +258,15 @@ function renderMembers(members) {
       }
     });
   });
-  $$('[data-remove-registration]').forEach((button) => {
-    button.addEventListener('click', () => removeRoomRegistration(button.dataset.removeRegistration));
+  $$('[data-remove-room-member]').forEach((button) => {
+    button.addEventListener('click', () => removeRoomMember(button.dataset.removeRoomMember));
   });
 }
 
 function renderMemberCard(member) {
   const canManageMembers = roomPayload
     && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
+  const canRemoveMember = canRemoveRoomMember(member, canManageMembers);
   const presence = member.presence_status === 'online' ? '在线' : '离线';
   const tags = [
     member.account_type === 'temporary' ? '临时' : '',
@@ -273,7 +274,8 @@ function renderMemberCard(member) {
   ].filter(Boolean);
 
   return `
-    <article class="member-card">
+    <article class="member-card ${canRemoveMember ? 'can-remove' : ''}">
+      ${canRemoveMember ? `<button type="button" class="member-delete-button" data-remove-room-member="${member.user_id}" aria-label="移除 ${escapeHtml(member.display_name)}">移除</button>` : ''}
       ${avatarHtml(member, 'member-avatar')}
       <div class="member-card-body">
         <div class="member-card-head">
@@ -285,13 +287,17 @@ function renderMemberCard(member) {
         ${member.account_type === 'temporary' && member.username ? `<p class="member-username">用户名：${escapeHtml(member.username)}</p>` : ''}
         <div class="member-card-actions">
           ${pageUser.role === 'admin' ? memberStatusSelect(member) : `<span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>`}
-          ${canManageMembers && roomPayload.room.venue_id ? `
-            <button type="button" class="secondary member-remove-button" data-remove-registration="${member.user_id}">移出报名</button>
-          ` : ''}
         </div>
       </div>
     </article>
   `;
+}
+
+function canRemoveRoomMember(member, canManageMembers) {
+  if (!canManageMembers || !roomPayload || !roomPayload.room) return false;
+  if (Number(member.user_id) === Number(roomPayload.room.owner_user_id)) return false;
+  if (member.current_match_id || ['in_match', 'awaiting_result', 'locked'].includes(member.play_status)) return false;
+  return member.presence_status === 'offline' || member.account_type === 'temporary';
 }
 
 function memberStatusSelect(member) {
@@ -342,10 +348,10 @@ async function addRoomRegistrations(event) {
   }
 }
 
-async function removeRoomRegistration(userId) {
-  if (!window.confirm('确认把这个成员移出报名名单？')) return;
+async function removeRoomMember(userId) {
+  if (!window.confirm('确认把这个成员移出房间？不会删除他的用户和比赛记录。')) return;
   try {
-    await api(`/api/rooms/${roomId}/registrations/${userId}`, { method: 'DELETE' });
+    await api(`/api/rooms/${roomId}/members/${userId}`, { method: 'DELETE' });
     await loadRoom();
   } catch (error) {
     showMessage(error.message);

@@ -781,6 +781,54 @@ router.delete('/:roomId/registrations/:userId', requireAuth, asyncRoute(async (r
   res.json({ ok: true });
 }));
 
+router.delete('/:roomId/members/:userId', requireAuth, asyncRoute(async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const userId = Number(req.params.userId);
+
+  await transaction(async (conn) => {
+    const room = await assertActiveRoom(conn, roomId);
+    if (Number(room.owner_user_id) !== Number(req.session.user.id) && req.session.user.role !== 'admin') {
+      throw new Error('只有房主或管理员可以移除房间成员');
+    }
+    if (Number(room.owner_user_id) === userId) {
+      throw new Error('不能移除房间创建者');
+    }
+
+    const rows = await conn.query(
+      `SELECT
+         rm.presence_status,
+         rm.play_status,
+         rm.current_match_id,
+         u.account_type
+       FROM room_members rm
+       JOIN users u ON u.id = rm.user_id
+       WHERE rm.room_id = ?
+         AND rm.user_id = ?
+       LIMIT 1`,
+      [roomId, userId]
+    );
+    const member = rows[0];
+    if (!member) return;
+
+    if (member.current_match_id || ['in_match', 'awaiting_result', 'locked'].includes(member.play_status)) {
+      throw new Error('成员正在比赛或等待结果，不能移除');
+    }
+    if (member.presence_status !== 'offline' && member.account_type !== 'temporary') {
+      throw new Error('只能移除离线成员或临时成员');
+    }
+
+    await conn.query(
+      `DELETE FROM room_members
+       WHERE room_id = ?
+         AND user_id = ?`,
+      [roomId, userId]
+    );
+  });
+
+  await emitRoomChanged(req.app.get('io'), roomId);
+  res.json({ ok: true });
+}));
+
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
   const payload = await getRoomPayload(Number(req.params.roomId), req.session.user.id, {
     matchDate: req.query.matchDate

@@ -531,6 +531,7 @@ h3 {
 }
 
 .member-card {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(92px, 42%) minmax(0, 1fr);
   gap: 6px;
@@ -552,6 +553,10 @@ h3 {
 .member-card-head {
   display: grid;
   gap: 3px;
+}
+
+.member-card.can-remove .member-card-head {
+  padding-right: 48px;
 }
 
 .member-card-head strong {
@@ -616,6 +621,21 @@ h3 {
   flex: 1 1 96px;
   min-height: 36px;
   padding: 6px 10px;
+}
+
+.member-delete-button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: 0 4px 10px rgba(189, 67, 60, 0.14);
 }
 
 .member-status-pill.waiting {
@@ -1040,6 +1060,18 @@ small {
 
   .member-card-info {
     font-size: 12px;
+  }
+
+  .member-card.can-remove .member-card-head {
+    padding-right: 42px;
+  }
+
+  .member-delete-button {
+    top: 5px;
+    right: 5px;
+    min-height: 24px;
+    padding: 3px 8px;
+    font-size: 11px;
   }
 
   .member-status-select,
