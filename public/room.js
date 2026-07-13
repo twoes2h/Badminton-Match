@@ -241,38 +241,7 @@ function renderMembers(members) {
   const canManageMembers = roomPayload
     && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
   $('#memberCount').textContent = `${members.filter((member) => member.presence_status === 'online').length}/${members.length}`;
-  $('#memberList').innerHTML = members.map((member) => `
-    <article class="member-card">
-      ${avatarHtml(member, 'member-avatar')}
-      <div class="member-card-body">
-        <div class="member-card-head">
-          <strong>${escapeHtml(member.display_name)} ${ratingBadgeHtml(member.rating)}</strong>
-          <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
-        </div>
-        <p class="member-card-info">积分 ${member.rating} · ${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level}</p>
-        <p class="member-card-info">${member.presence_status === 'online' ? '在线' : '离线'}${member.account_type === 'temporary' ? ' · 临时' : ''}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
-        ${member.account_type === 'temporary' && member.username ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
-        <div class="member-status-row">
-          <span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
-        </div>
-        <div class="member-card-actions">
-          ${pageUser.role === 'admin' ? `
-            <label>
-              管理状态
-              <select data-member-status="${member.user_id}">
-                ${['idle', 'waiting', 'resting', 'busy', 'locked'].map((status) => `
-                  <option value="${status}" ${status === member.play_status ? 'selected' : ''}>${StatusLabels[status]}</option>
-                `).join('')}
-              </select>
-            </label>
-          ` : ''}
-          ${canManageMembers && roomPayload.room.venue_id ? `
-            <button type="button" class="secondary" data-remove-registration="${member.user_id}">移出报名</button>
-          ` : ''}
-        </div>
-      </div>
-    </article>
-  `).join('');
+  $('#memberList').innerHTML = members.map(renderMemberCard).join('');
 
   $$('[data-member-status]').forEach((select) => {
     select.addEventListener('change', async () => {
@@ -290,6 +259,47 @@ function renderMembers(members) {
   $$('[data-remove-registration]').forEach((button) => {
     button.addEventListener('click', () => removeRoomRegistration(button.dataset.removeRegistration));
   });
+}
+
+function renderMemberCard(member) {
+  const canManageMembers = roomPayload
+    && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
+  const presence = member.presence_status === 'online' ? '在线' : '离线';
+  const tags = [
+    member.account_type === 'temporary' ? '临时' : '',
+    member.is_blacklisted ? '已拉黑' : ''
+  ].filter(Boolean);
+
+  return `
+    <article class="member-card">
+      ${avatarHtml(member, 'member-avatar')}
+      <div class="member-card-body">
+        <div class="member-card-head">
+          <strong>${escapeHtml(member.display_name)} ${ratingBadgeHtml(member.rating)}</strong>
+          <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
+        </div>
+        <p class="member-card-info">等级 ${member.skill_level} · ${presence}${tags.length ? ` · ${tags.join(' · ')}` : ''}</p>
+        <p class="member-card-info">积分 ${member.rating} · ${GenderLabels[member.gender] || member.gender}</p>
+        ${member.account_type === 'temporary' && member.username ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
+        <div class="member-card-actions">
+          ${pageUser.role === 'admin' ? memberStatusSelect(member) : `<span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>`}
+          ${canManageMembers && roomPayload.room.venue_id ? `
+            <button type="button" class="secondary member-remove-button" data-remove-registration="${member.user_id}">移出报名</button>
+          ` : ''}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function memberStatusSelect(member) {
+  return `
+    <select class="member-status-select" data-member-status="${member.user_id}" aria-label="成员状态">
+      ${['idle', 'waiting', 'resting', 'busy', 'locked'].map((status) => `
+        <option value="${status}" ${status === member.play_status ? 'selected' : ''}>${StatusLabels[status]}</option>
+      `).join('')}
+    </select>
+  `;
 }
 
 async function createTemporaryMember(event) {
