@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS matches (
   CONSTRAINT fk_matches_creator FOREIGN KEY (created_by) REFERENCES users(id),
   INDEX idx_matches_room_status (room_id, status),
   INDEX idx_matches_started (started_at),
-  INDEX idx_matches_room_started_status (room_id, started_at, status)
+  INDEX idx_matches_room_started_status (room_id, started_at, status),
+  INDEX idx_matches_status_ended (status, ended_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS match_players (

@@ -44,9 +44,9 @@ function renderProfile(user) {
   $('#accountTypePill').classList.toggle('resting', user.account_type === 'temporary');
 
   const canUpdate = Number(user.can_update_profile) === 1;
-  $('#profileEditPill').textContent = canUpdate ? '今日可改' : '今日已改';
+  $('#profileEditPill').textContent = canUpdate ? '可随时保存' : '暂不可改';
   $('#profileEditPill').classList.toggle('busy', !canUpdate);
-  $('#saveProfileBtn').disabled = !canUpdate;
+  $('#saveProfileBtn').disabled = false;
 
   const notice = $('#temporaryNotice');
   if (user.account_type === 'temporary') {
@@ -63,6 +63,7 @@ function renderProfile(user) {
   form.birthYear.value = user.birth_year || '';
   form.skillLevel.value = user.skill_level || 5;
   selectedAvatarDataUrl = null;
+  updateAvatarButton();
   updateAvatarPreview();
 }
 
@@ -81,18 +82,25 @@ async function previewAvatarFile(event) {
   const file = event.currentTarget.files[0];
   if (!file) {
     selectedAvatarDataUrl = null;
+    updateAvatarButton();
     updateAvatarPreview();
     return;
   }
   try {
     selectedAvatarDataUrl = await readAvatarFile(file);
+    updateAvatarButton();
     updateAvatarPreview();
   } catch (error) {
     event.currentTarget.value = '';
     selectedAvatarDataUrl = null;
+    updateAvatarButton();
     updateAvatarPreview();
     showMessage(error.message);
   }
+}
+
+function updateAvatarButton() {
+  $('#uploadAvatarBtn').disabled = !selectedAvatarDataUrl;
 }
 
 function readAvatarFile(file) {
@@ -128,7 +136,8 @@ async function uploadAvatar() {
     profileUser.avatarUrl = data.avatarUrl;
     selectedAvatarDataUrl = null;
     input.value = '';
-    showMessage('头像已上传');
+    updateAvatarButton();
+    showMessage('头像已保存');
     await loadProfile();
   } catch (error) {
     showMessage(error.message);

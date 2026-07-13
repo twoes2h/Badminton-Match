@@ -22,7 +22,7 @@
 
       <section class="grid desktop-two">
         <section class="stack">
-          <form id="searchRoomForm" class="card stack">
+          <form id="searchRoomForm" class="card compact-search">
             <div class="card-title">
               <h2>查找房间</h2>
             </div>
@@ -32,52 +32,55 @@
             </div>
           </form>
 
-          <form id="createRoomForm" class="card stack">
+          <section id="createRoomCard" class="card stack">
             <div class="card-title">
               <h2>创建房间</h2>
+              <button id="toggleCreateRoomBtn" type="button" class="secondary">创建</button>
             </div>
-            <label>
-              房间名
-              <input name="name" placeholder="留空自动生成">
-            </label>
-            <div class="two">
+            <form id="createRoomForm" class="stack hide">
               <label>
-                场地数
-                <input name="courtCount" type="number" min="1" max="20" value="3">
+                房间名
+                <input name="name" placeholder="留空自动生成">
               </label>
-              <label>
-                在线上限
-                <input name="maxPeople" type="number" min="2" max="200" value="30">
-              </label>
-            </div>
-            <div class="two">
-              <label>
-                模式
-                <select name="mode">
-                  <option value="free">自由匹配</option>
-                  <option value="round">固定场次</option>
-                </select>
-              </label>
-              <label>
-                密码
-                <input name="password" type="password">
-              </label>
-            </div>
-            <section id="venueCreateBox" class="stack hide">
-              <label>
-                场地
-                <select id="venueSelect" name="venueId">
-                  <option value="">普通房间，不绑定场地</option>
-                </select>
-              </label>
-              <p id="venueCreateMeta" class="meta"></p>
-              <div id="venueRosterBox" class="stack hide">
-                <input id="registrationSearch" type="search" placeholder="搜索报名成员">
-                <div id="createRegistrationList" class="user-pick-grid"></div>
+              <div class="two">
+                <label>
+                  场地数
+                  <input name="courtCount" type="number" min="1" max="20" value="3">
+                </label>
+                <label>
+                  在线上限
+                  <input name="maxPeople" type="number" min="2" max="200" value="30">
+                </label>
               </div>
-            </section>
-            <button type="submit">创建并进入</button>
-          </form>
+              <div class="two">
+                <label>
+                  模式
+                  <select name="mode">
+                    <option value="free">自由匹配</option>
+                    <option value="round">固定场次</option>
+                  </select>
+                </label>
+                <label>
+                  密码
+                  <input name="password" type="password">
+                </label>
+              </div>
+              <section id="venueCreateBox" class="stack hide">
+                <label>
+                  场地
+                  <select id="venueSelect" name="venueId">
+                    <option value="">普通房间，不绑定场地</option>
+                  </select>
+                </label>
+                <p id="venueCreateMeta" class="meta"></p>
+                <div id="venueRosterBox" class="stack hide">
+                  <input id="registrationSearch" type="search" placeholder="搜索报名成员">
+                  <div id="createRegistrationList" class="user-pick-grid"></div>
+                </div>
+              </section>
+              <button type="submit">创建并进入</button>
+            </form>
+          </section>
         </section>
 
         <section class="card">

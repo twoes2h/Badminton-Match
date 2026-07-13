@@ -176,3 +176,23 @@ function formatMatchPreferences(raw) {
   if (values.includes('any') || values.length === 0) return '不限';
   return values.map((value) => MatchLabels[value] || value).join('、');
 }
+
+function ratingLevelUnits(rating) {
+  const value = Number(rating);
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(1, Math.floor((value - 1000) / 200) + 1);
+}
+
+function ratingBadgeText(rating) {
+  let units = ratingLevelUnits(rating);
+  const trophies = Math.floor(units / 25);
+  units %= 25;
+  const rackets = Math.floor(units / 5);
+  const feathers = units % 5;
+  return `${'🏆'.repeat(trophies)}${'🏸'.repeat(rackets)}${'🪶'.repeat(feathers)}` || '🪶';
+}
+
+function ratingBadgeHtml(rating) {
+  const units = ratingLevelUnits(rating);
+  return `<span class="rating-badge" title="比赛等级 ${units}">${ratingBadgeText(rating)}</span>`;
+}

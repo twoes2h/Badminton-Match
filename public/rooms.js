@@ -20,6 +20,11 @@ function bindRoomsPage() {
   });
 
   $('#refreshRoomsBtn').addEventListener('click', () => loadRooms());
+  $('#toggleCreateRoomBtn').addEventListener('click', () => {
+    const form = $('#createRoomForm');
+    form.classList.toggle('hide');
+    $('#toggleCreateRoomBtn').textContent = form.classList.contains('hide') ? '创建' : '收起';
+  });
   $('#venueSelect').addEventListener('change', renderVenueCreateSelection);
   $('#registrationSearch').addEventListener('input', renderCreateRegistrationList);
 
@@ -90,7 +95,7 @@ function renderCreateRegistrationList() {
         <input id="${id}" type="checkbox" value="${user.id}" ${selectedCreateRegistrationIds.has(Number(user.id)) ? 'checked' : ''}>
         <label for="${id}">
           ${avatarHtml(user, 'small')}
-          <span>${escapeHtml(user.display_name)}</span>
+          <span>${escapeHtml(user.display_name)} ${ratingBadgeHtml(user.rating)}</span>
           <small>Lv.${user.skill_level} · ${user.rating}</small>
         </label>
       `;
@@ -114,7 +119,7 @@ async function loadRooms(q = '') {
       : '<p class="muted">暂无房间，可以先创建一个。</p>';
 
     $$('[data-join-room]').forEach((button) => {
-      button.addEventListener('click', () => joinRoom(button.dataset.joinRoom));
+      button.addEventListener('click', () => joinRoom(button.dataset.joinRoom, button.dataset.hasPassword === '1'));
     });
   } catch (error) {
     showMessage(error.message);
@@ -123,12 +128,14 @@ async function loadRooms(q = '') {
 
 function renderRoomItem(room) {
   const isVenueRoom = Boolean(room.venue_id);
+  const isOwner = Number(room.owner_user_id) === Number(pageUser.id);
+  const adminGuest = pageUser.role === 'admin' && !isOwner;
   return `
     <article class="item">
       <div class="item-head">
         <div>
           <strong>${escapeHtml(room.name)}</strong>
-          <p class="meta">${escapeHtml(room.code)} · ${room.mode === 'round' ? '固定场次' : '自由匹配'}${isVenueRoom ? ' · 场地房间' : ''}</p>
+          <p class="meta">${escapeHtml(room.code)} · ${room.mode === 'round' ? '固定场次' : '自由匹配'}${isVenueRoom ? ' · 场地房间' : ''}${Number(room.has_password) === 1 ? ' · 有密码' : ''}</p>
         </div>
         <span class="pill">${room.online_count || 0}/${room.max_people}</span>
       </div>
@@ -137,15 +144,15 @@ function renderRoomItem(room) {
         <p class="meta">${escapeHtml(room.venue_name || '')} · ${formatVenueRange({ starts_at: room.venue_starts_at, ends_at: room.venue_ends_at })}</p>
         ${room.venue_location_url ? `<a class="button secondary" href="${escapeHtml(room.venue_location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
       ` : ''}
-      ${isVenueRoom && pageUser.role === 'admin'
-        ? `<a class="button" href="/room.html?id=${room.id}">管理房间</a>`
-        : `<button type="button" data-join-room="${room.id}">进入房间</button>`}
+      ${adminGuest
+        ? `<button type="button" data-join-room="${room.id}" data-has-password="0">管理房间</button>`
+        : `<button type="button" data-join-room="${room.id}" data-has-password="${Number(room.has_password) === 1 ? '1' : '0'}">进入房间</button>`}
     </article>
   `;
 }
 
-async function joinRoom(roomId) {
-  const password = window.prompt('房间密码，没有则留空') || '';
+async function joinRoom(roomId, hasPassword) {
+  const password = hasPassword ? window.prompt('房间密码') || '' : '';
   try {
     await api(`/api/rooms/${roomId}/join`, {
       method: 'POST',

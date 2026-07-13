@@ -117,13 +117,20 @@ function normalizeTemporaryMemberInput(body) {
   return { displayName, username, gender, birthYear, skillLevel, rating };
 }
 
-async function findActiveRoomForUser(conn, userId) {
+async function findActiveRoomForUser(conn, userId, options = {}) {
+  const params = [userId, userId];
+  let ownerFilter = '';
+  if (options.ownerOnly) {
+    ownerFilter = 'AND r.owner_user_id = ?';
+    params.push(userId);
+  }
   const rows = await conn.query(
     `SELECT r.id, r.name, r.code, r.owner_user_id, rm.presence_status, rm.play_status
      FROM room_members rm
      JOIN rooms r ON r.id = rm.room_id
      WHERE rm.user_id = ?
        AND r.status = 'active'
+       ${ownerFilter}
        AND (
          rm.presence_status = 'online'
          OR rm.play_status IN ('in_match','awaiting_result','locked')
@@ -131,9 +138,51 @@ async function findActiveRoomForUser(conn, userId) {
        )
      ORDER BY r.created_at DESC
      LIMIT 1`,
-    [userId, userId]
+    params
   );
   return rows[0] || null;
+}
+
+async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
+  const roomRows = await conn.query(
+    `SELECT DISTINCT rm.room_id, rm.current_match_id
+     FROM room_members rm
+     JOIN rooms r ON r.id = rm.room_id
+     WHERE rm.user_id = ?
+       AND r.status = 'active'
+       AND r.owner_user_id <> ?
+       AND r.id <> ?`,
+    [userId, userId, keepRoomId]
+  );
+  const roomIds = [...new Set(roomRows.map((row) => Number(row.room_id)).filter(Boolean))];
+  const matchIds = [...new Set(roomRows.map((row) => Number(row.current_match_id)).filter(Boolean))];
+
+  for (const matchId of matchIds) {
+    await markMatchAwaitingResult(conn, matchId);
+  }
+
+  if (roomIds.length) {
+    await conn.query(
+      `UPDATE room_members rm
+       JOIN rooms r ON r.id = rm.room_id
+       SET rm.presence_status = 'offline',
+           rm.play_status = CASE
+             WHEN rm.current_match_id IS NULL THEN 'idle'
+             ELSE 'awaiting_result'
+           END,
+           rm.current_match_id = CASE
+             WHEN rm.current_match_id IS NULL THEN NULL
+             ELSE rm.current_match_id
+           END
+       WHERE rm.user_id = ?
+         AND r.status = 'active'
+         AND r.owner_user_id <> ?
+         AND r.id <> ?`,
+      [userId, userId, keepRoomId]
+    );
+  }
+
+  return roomIds;
 }
 
 async function assertMember(conn, roomId, userId) {
@@ -375,6 +424,8 @@ router.get('/', requireAuth, asyncRoute(async (req, res) => {
        r.mode,
        r.court_count,
        r.max_people,
+       r.owner_user_id,
+       CASE WHEN r.password_hash IS NULL THEN 0 ELSE 1 END AS has_password,
        r.created_at,
        v.name AS venue_name,
        v.starts_at AS venue_starts_at,
@@ -467,7 +518,9 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
       if (usedRows[0]) throw new Error('这个场地已经创建了房间');
       await assertVenueUserAvailability(conn, { userIds: registeredUserIds, venue });
     } else {
-      const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
+      const activeRoom = await findActiveRoomForUser(conn, req.session.user.id, {
+        ownerOnly: req.session.user.role === 'admin'
+      });
       if (activeRoom) {
         throw new Error(`你已经在房间 ${activeRoom.name} 中，请先离开或解散该房间`);
       }
@@ -522,10 +575,18 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
   const password = String(req.body.password || '');
 
-  const room = await transaction(async (conn) => {
+  const result = await transaction(async (conn) => {
     const found = await assertActiveRoom(conn, roomId);
-    if (found.password_hash && !(await bcrypt.compare(password, found.password_hash))) {
+    const isAdminGuest = req.session.user.role === 'admin'
+      && Number(found.owner_user_id) !== Number(req.session.user.id);
+
+    if (found.password_hash && !isAdminGuest && !(await bcrypt.compare(password, found.password_hash))) {
       throw new Error('房间密码错误');
+    }
+
+    if (isAdminGuest) {
+      const changedRoomIds = await releaseAdminGuestMemberships(conn, req.session.user.id, roomId);
+      return { room: found, changedRoomIds };
     }
 
     const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
@@ -565,11 +626,13 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
          END`,
       [roomId, req.session.user.id]
     );
-    return found;
+    return { room: found, changedRoomIds: [roomId] };
   });
 
-  await emitRoomChanged(req.app.get('io'), roomId);
-  res.json({ room });
+  for (const changedRoomId of [...new Set([roomId, ...(result.changedRoomIds || [])])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
+  res.json({ room: result.room });
 }));
 
 router.post('/:roomId/temporary-members', requireAuth, asyncRoute(async (req, res) => {

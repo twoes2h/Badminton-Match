@@ -1,5 +1,7 @@
 const { transaction } = require('../db');
 
+const RESULT_TIMEOUT_MINUTES = 3;
+
 function oppositeTeam(team) {
   return team === 'red' ? 'blue' : 'red';
 }
@@ -183,6 +185,17 @@ function calculateRatingDeltas(players, resolution) {
   });
 }
 
+function drawResolution() {
+  return {
+    status: 'completed',
+    winner: 'draw',
+    invalidReason: null,
+    averageDiff: null,
+    scoreRed: null,
+    scoreBlue: null
+  };
+}
+
 function avg(values) {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -350,11 +363,32 @@ async function finalizeIfReady(conn, matchId) {
     }
   }
 
+  const resolution = resolveWinner(decidingPlayers, decidingResults);
+  return applyFinalResolution(conn, matchId, players, resolution);
+}
+
+function resolveTimedOutWinner(players, results) {
+  const realPlayers = players.filter((player) => !isTemporaryPlayer(player));
+  const realPlayerIds = new Set(realPlayers.map((player) => Number(player.user_id)));
+  const submittedRealResults = results.filter((result) => realPlayerIds.has(Number(result.user_id)));
+
+  if (realPlayers.length > 0) {
+    if (submittedRealResults.length === 0) return drawResolution();
+    const submittedIds = new Set(submittedRealResults.map((result) => Number(result.user_id)));
+    const decidingPlayers = realPlayers.filter((player) => submittedIds.has(Number(player.user_id)));
+    return resolveWinner(decidingPlayers, submittedRealResults);
+  }
+
+  const authorityResult = results.find((result) => Number(result.is_authority) === 1);
+  if (!authorityResult) return drawResolution();
+  return resolveWinner([], [authorityResult]);
+}
+
+async function applyFinalResolution(conn, matchId, players, resolution) {
   const matchRows = await conn.query('SELECT * FROM matches WHERE id = ? LIMIT 1', [matchId]);
   const match = matchRows[0];
   if (!match) throw new Error('比赛不存在');
 
-  const resolution = resolveWinner(decidingPlayers, decidingResults);
   const deltas = calculateRatingDeltas(players, resolution);
   const finalStatus = resolution.winner === 'invalid' ? 'invalid' : 'completed';
 
@@ -418,10 +452,69 @@ async function finalizeIfReady(conn, matchId) {
   };
 }
 
+async function finalizeTimedOutMatch(conn, matchId) {
+  const players = await conn.query(
+    `SELECT mp.*, u.display_name, u.account_type
+     FROM match_players mp
+     JOIN users u ON u.id = mp.user_id
+     WHERE mp.match_id = ?
+     ORDER BY mp.team, mp.id`,
+    [matchId]
+  );
+  const results = await conn.query(
+    `SELECT
+       mr.*,
+       u.role,
+       CASE WHEN u.role = 'admin' OR u.id = r.owner_user_id THEN 1 ELSE 0 END AS is_authority
+     FROM match_results mr
+     JOIN users u ON u.id = mr.user_id
+     JOIN matches m ON m.id = mr.match_id
+     JOIN rooms r ON r.id = m.room_id
+     WHERE mr.match_id = ?
+     ORDER BY mr.submitted_at DESC, mr.id DESC`,
+    [matchId]
+  );
+  const resolution = resolveTimedOutWinner(players, results);
+  return applyFinalResolution(conn, matchId, players, resolution);
+}
+
+async function finalizeTimedOutResults() {
+  return transaction(async (conn) => {
+    const matches = await conn.query(
+      `SELECT id, room_id
+       FROM matches
+       WHERE status = 'awaiting_result'
+         AND ended_at IS NOT NULL
+         AND ended_at <= DATE_SUB(NOW(), INTERVAL ${RESULT_TIMEOUT_MINUTES} MINUTE)
+       ORDER BY ended_at ASC
+       LIMIT 50`
+    );
+    const finalized = [];
+    for (const match of matches) {
+      const result = await finalizeTimedOutMatch(conn, match.id);
+      if (result.finalized) {
+        finalized.push({
+          matchId: Number(match.id),
+          roomId: Number(match.room_id),
+          winner: result.winner,
+          status: result.status
+        });
+      }
+    }
+
+    return {
+      finalized,
+      roomIds: [...new Set(finalized.map((item) => item.roomId))]
+    };
+  });
+}
+
 module.exports = {
   markMatchAwaitingResult,
   submitMatchResult,
   finalizeIfReady,
+  finalizeTimedOutResults,
   resolveWinner,
+  resolveTimedOutWinner,
   calculateRatingDeltas
 };

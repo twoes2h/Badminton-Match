@@ -204,7 +204,7 @@ router.get('/me', requireAuth, asyncRoute(async (req, res) => {
        avatar_url,
        role, account_type, temporary_expires_at, password_changed_at,
        profile_updated_on, matches_played,
-       CASE WHEN profile_updated_on IS NULL OR profile_updated_on < CURDATE() THEN 1 ELSE 0 END AS can_update_profile
+       1 AS can_update_profile
      FROM users
      WHERE id = ?
      LIMIT 1`,
@@ -258,17 +258,13 @@ router.patch('/profile', requireAuth, asyncRoute(async (req, res) => {
 
   const user = await transaction(async (conn) => {
     const rows = await conn.query(
-      `SELECT id, profile_updated_on,
-              CASE WHEN profile_updated_on = CURDATE() THEN 1 ELSE 0 END AS updated_today
+      `SELECT id, profile_updated_on
        FROM users
        WHERE id = ?
        LIMIT 1`,
       [req.session.user.id]
     );
     if (!rows[0]) throw new Error('用户不存在');
-    if (Number(rows[0].updated_today) === 1) {
-      throw new Error('个人资料一天只能修改一次');
-    }
 
     await conn.query(
       `UPDATE users

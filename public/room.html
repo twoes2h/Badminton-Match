@@ -77,12 +77,18 @@
           <div class="card">
             <div class="card-title">
               <h2>成员</h2>
-              <span id="memberCount" class="pill"></span>
+              <div class="row wrap">
+                <span id="memberCount" class="pill"></span>
+                <button id="toggleTemporaryMemberBtn" type="button" class="secondary hide">添加临时</button>
+              </div>
             </div>
             <form id="temporaryMemberForm" class="stack hide">
               <div class="card-title">
                 <h3>添加临时成员</h3>
-                <span class="pill resting">默认密码 000000</span>
+                <div class="row wrap">
+                  <span class="pill resting">默认密码 000000</span>
+                  <button id="hideTemporaryMemberBtn" type="button" class="secondary">收起</button>
+                </div>
               </div>
               <label>
                 昵称
@@ -126,7 +132,7 @@
               <div id="roomRegistrationList" class="user-pick-grid"></div>
               <button type="submit">加入报名名单</button>
             </form>
-            <div id="memberList" class="list"></div>
+            <div id="memberList" class="member-grid"></div>
           </div>
         </section>
 

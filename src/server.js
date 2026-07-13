@@ -16,6 +16,7 @@ const roomRoutes = require('./routes/rooms');
 const adminRoutes = require('./routes/admin');
 const { attachRealtime, emitRoomChanged } = require('./realtime');
 const { logEvent, requestFields } = require('./logger');
+const { finalizeTimedOutResults } = require('./services/results');
 
 async function main() {
   if (config.autoMigrate) {
@@ -28,6 +29,7 @@ async function main() {
     cors: false
   });
   let venueCleanupRunning = false;
+  let resultTimeoutRunning = false;
 
   async function runVenueCleanup() {
     if (venueCleanupRunning) return;
@@ -55,8 +57,34 @@ async function main() {
     }
   }
 
+  async function runResultTimeouts() {
+    if (resultTimeoutRunning) return;
+    resultTimeoutRunning = true;
+    try {
+      const result = await finalizeTimedOutResults();
+      if (result.finalized.length) {
+        logEvent('info', 'matches.timeout_finalized', {
+          finalized: result.finalized
+        });
+        for (const roomId of result.roomIds) {
+          await emitRoomChanged(io, roomId);
+        }
+      }
+    } catch (error) {
+      logEvent('error', 'matches.timeout_failed', {
+        message: error.message,
+        code: error.code,
+        errno: error.errno,
+        sqlState: error.sqlState
+      });
+    } finally {
+      resultTimeoutRunning = false;
+    }
+  }
+
   await cleanupExpiredTemporaryUsers();
   await runVenueCleanup();
+  await runResultTimeouts();
 
   const sessionMiddleware = session({
     name: 'badminton.sid',
@@ -128,6 +156,9 @@ async function main() {
 
   const venueCleanupTimer = setInterval(runVenueCleanup, 1000 * 60);
   venueCleanupTimer.unref();
+
+  const resultTimeoutTimer = setInterval(runResultTimeouts, 1000 * 30);
+  resultTimeoutTimer.unref();
 }
 
 main().catch((error) => {

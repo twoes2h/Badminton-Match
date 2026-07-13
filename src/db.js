@@ -92,6 +92,7 @@ async function runMigrations() {
   );
   await query('CREATE INDEX IF NOT EXISTS idx_rooms_status_owner ON rooms (status, owner_user_id)');
   await query('CREATE INDEX IF NOT EXISTS idx_matches_room_started_status ON matches (room_id, started_at, status)');
+  await query('CREATE INDEX IF NOT EXISTS idx_matches_status_ended ON matches (status, ended_at)');
   await query('CREATE INDEX IF NOT EXISTS idx_match_players_user_match ON match_players (user_id, match_id)');
   await query(
     `ALTER TABLE users

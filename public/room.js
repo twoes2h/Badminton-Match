@@ -1,5 +1,5 @@
 const roomId = Number(queryParam('id'));
-const MATCH_CHECK_KEYS = ['any', 'md', 'wd', 'xd', 'ms', 'ws', 'xs'];
+const MATCH_CHECK_KEYS = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 let pageUser = null;
 let roomPayload = null;
 let socket = null;
@@ -34,6 +34,12 @@ function bindRoomPage() {
 
   $('#stateForm').addEventListener('submit', saveState);
   $('#temporaryMemberForm').addEventListener('submit', createTemporaryMember);
+  $('#toggleTemporaryMemberBtn').addEventListener('click', () => {
+    $('#temporaryMemberForm').classList.remove('hide');
+  });
+  $('#hideTemporaryMemberBtn').addEventListener('click', () => {
+    $('#temporaryMemberForm').classList.add('hide');
+  });
   $('#registrationForm').addEventListener('submit', addRoomRegistrations);
   $('#roomRegistrationSearch').addEventListener('input', renderRoomRegistrationList);
   $('#freeMatchForm').addEventListener('submit', createFreeMatch);
@@ -90,10 +96,11 @@ function renderRoom(payload) {
   $$('[data-mode-panel]').forEach((panel) => {
     panel.classList.toggle('hide', panel.dataset.modePanel !== room.mode);
   });
-  $('#stateForm').classList.toggle('hide', !member && Boolean(room.venue_id));
-  $('#leaveRoomBtn').classList.toggle('hide', isOwner);
+  $('#stateForm').classList.toggle('hide', !member);
+  $('#leaveRoomBtn').classList.toggle('hide', isOwner || !member);
   $('#dissolveRoomBtn').classList.toggle('hide', !isOwner && pageUser.role !== 'admin');
-  $('#temporaryMemberForm').classList.toggle('hide', !canManageMembers);
+  $('#toggleTemporaryMemberBtn').classList.toggle('hide', !canManageMembers);
+  if (!canManageMembers) $('#temporaryMemberForm').classList.add('hide');
   $('#registrationForm').classList.toggle('hide', !canManageMembers || !room.venue_id);
 }
 
@@ -133,7 +140,8 @@ function renderStatus(member) {
 }
 
 function renderPreferenceChecks(raw) {
-  const selected = new Set(matchPreferenceValues(raw));
+  const values = matchPreferenceValues(raw);
+  const selected = values.includes('any') ? new Set() : new Set(values);
   renderCheckGroup($('#preferenceChecks'), {
     keys: MATCH_CHECK_KEYS,
     name: 'matchPreferences',
@@ -148,7 +156,7 @@ function renderFreeMatchChecks() {
     keys: MATCH_CHECK_KEYS,
     name: 'freeMatchTypes',
     prefix: 'free',
-    selected: new Set(current.length ? current : ['any'])
+    selected: new Set(current.includes('any') ? [] : current)
   });
 }
 
@@ -157,23 +165,6 @@ function renderCheckGroup(container, { keys, name, prefix, selected }) {
     <input id="${prefix}-${key}" type="checkbox" name="${name}" value="${key}" ${selected.has(key) ? 'checked' : ''}>
     <label for="${prefix}-${key}">${MatchLabels[key]}</label>
   `).join('');
-
-  bindAnyCheckGroup(name, `${prefix}-any`);
-}
-
-function bindAnyCheckGroup(name, anyId) {
-  const any = $(`#${anyId}`);
-  const others = $$(`[name="${name}"]`).filter((checkbox) => checkbox.value !== 'any');
-
-  any.addEventListener('change', () => {
-    if (any.checked) others.forEach((checkbox) => { checkbox.checked = false; });
-  });
-  others.forEach((checkbox) => {
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked) any.checked = false;
-      if (!others.some((item) => item.checked)) any.checked = true;
-    });
-  });
 }
 
 function checkedValues(name) {
@@ -182,12 +173,19 @@ function checkedValues(name) {
 
 function selectedPreferences() {
   const values = checkedValues('matchPreferences');
-  return values.length ? values : ['any'];
+  return normalizeSelectedMatchTypes(values);
 }
 
 function selectedFreeMatchTypes(withDefault = true) {
   const values = checkedValues('freeMatchTypes');
-  return values.length || !withDefault ? values : ['any'];
+  const normalized = normalizeSelectedMatchTypes(values);
+  return normalized.length || !withDefault ? normalized : ['any'];
+}
+
+function normalizeSelectedMatchTypes(values) {
+  const unique = [...new Set(values.filter((value) => MATCH_CHECK_KEYS.includes(value)))];
+  if (unique.length === 0 || unique.length === MATCH_CHECK_KEYS.length) return ['any'];
+  return unique;
 }
 
 function renderCourtModes(count) {
@@ -223,7 +221,7 @@ function renderRoomRegistrationList() {
         <input id="${id}" type="checkbox" value="${user.id}" ${selectedRoomRegistrationIds.has(Number(user.id)) ? 'checked' : ''}>
         <label for="${id}">
           ${avatarHtml(user, 'small')}
-          <span>${escapeHtml(user.display_name)}</span>
+          <span>${escapeHtml(user.display_name)} ${ratingBadgeHtml(user.rating)}</span>
           <small>Lv.${user.skill_level} · ${user.rating}</small>
         </label>
       `;
@@ -244,36 +242,36 @@ function renderMembers(members) {
     && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
   $('#memberCount').textContent = `${members.filter((member) => member.presence_status === 'online').length}/${members.length}`;
   $('#memberList').innerHTML = members.map((member) => `
-    <article class="item">
-      <div class="item-head">
-        <div class="member-line">
-          ${avatarHtml(member, 'small')}
-          <div>
-            <strong>${escapeHtml(member.display_name)}</strong>
-            <p class="meta">${GenderLabels[member.gender] || member.gender} · 等级 ${member.skill_level} · ${member.rating} 分</p>
+    <article class="member-card">
+      ${avatarHtml(member, 'member-avatar')}
+      <div class="member-card-body">
+        <div class="member-card-head">
+          <strong>${escapeHtml(member.display_name)} ${ratingBadgeHtml(member.rating)}</strong>
+          <div class="row wrap">
+            ${member.account_type === 'temporary' ? '<span class="pill resting">临时</span>' : ''}
+            <span class="pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
           </div>
         </div>
-        <div class="row wrap">
-          ${member.account_type === 'temporary' ? '<span class="pill resting">临时</span>' : ''}
-          <span class="pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>
+        <p class="meta">${GenderLabels[member.gender] || member.gender} · Lv.${member.skill_level} · ${member.rating} 分</p>
+        ${member.account_type === 'temporary' ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
+        <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
+        <p class="meta">${member.presence_status === 'online' ? '在线' : '离线'}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
+        <div class="member-card-actions">
+          ${pageUser.role === 'admin' ? `
+            <label>
+              管理状态
+              <select data-member-status="${member.user_id}">
+                ${['idle', 'waiting', 'resting', 'busy', 'locked'].map((status) => `
+                  <option value="${status}" ${status === member.play_status ? 'selected' : ''}>${StatusLabels[status]}</option>
+                `).join('')}
+              </select>
+            </label>
+          ` : ''}
+          ${canManageMembers && roomPayload.room.venue_id ? `
+            <button type="button" class="secondary" data-remove-registration="${member.user_id}">移出报名</button>
+          ` : ''}
         </div>
       </div>
-      ${member.account_type === 'temporary' ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
-      <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
-      <p class="meta">${member.presence_status === 'online' ? '在线' : '离线'}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
-      ${pageUser.role === 'admin' ? `
-        <label>
-          管理状态
-          <select data-member-status="${member.user_id}">
-            ${['idle', 'waiting', 'resting', 'busy', 'locked'].map((status) => `
-              <option value="${status}" ${status === member.play_status ? 'selected' : ''}>${StatusLabels[status]}</option>
-            `).join('')}
-          </select>
-        </label>
-      ` : ''}
-      ${canManageMembers && roomPayload.room.venue_id ? `
-        <button type="button" class="secondary" data-remove-registration="${member.user_id}">移出报名</button>
-      ` : ''}
     </article>
   `).join('');
 
@@ -386,11 +384,11 @@ function renderMatchCard(match) {
   const resultText = match.status === 'invalid'
     ? `无效：${escapeHtml(match.invalid_reason || '结果冲突')}`
     : match.result_winner
-      ? winnerLabel(match.result_winner)
+      ? formatMatchResultText(match)
       : StatusLabels[match.status] || match.status;
 
   return `
-    <article class="item">
+    <article class="item match-record">
       <div class="item-head">
         <div>
           <strong>${escapeHtml(match.label || MatchLabels[match.match_type])}${match.court_no ? ` · ${match.court_no} 号场` : ''}</strong>
@@ -423,7 +421,7 @@ function renderMatchCard(match) {
 }
 
 function playerLine(player) {
-  return `<span>${escapeHtml(player.display_name)} <small>${player.rating_before}${player.account_type === 'temporary' ? ' · 临时' : ''}${player.result_submitted ? ' · 已交' : ''}</small></span>`;
+  return `<span>${escapeHtml(player.display_name)} ${ratingBadgeHtml(player.rating_before)} <small>${player.rating_before}${player.account_type === 'temporary' ? ' · 临时' : ''}${player.result_submitted ? ' · 已交' : ''}</small></span>`;
 }
 
 function resultForm(matchId, options = {}) {
@@ -563,6 +561,15 @@ function winnerLabel(winner) {
     terminated: '终止',
     invalid: '无效'
   }[winner] || winner;
+}
+
+function formatMatchResultText(match) {
+  const base = winnerLabel(match.result_winner);
+  if (match.score_red !== null && match.score_red !== undefined
+    && match.score_blue !== null && match.score_blue !== undefined) {
+    return `${base} · 红${match.score_red} 蓝${match.score_blue}`;
+  }
+  return base;
 }
 
 async function saveState(event) {
