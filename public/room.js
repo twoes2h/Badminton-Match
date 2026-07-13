@@ -401,8 +401,8 @@ function renderMatchCard(match) {
     <article class="item match-record">
       <div class="item-head">
         <div>
-          <strong>${displayCourtNo(match) ? `${displayCourtNo(match)} 号场 · ` : ''}${escapeHtml(match.label || MatchLabels[match.match_type])}</strong>
-          <p class="meta">第 ${match.round_no || 1} 轮 · ${formatMatchTiming(match)}</p>
+          <strong>${formatMatchTitle(match)}</strong>
+          <p class="meta">${formatMatchTiming(match)}</p>
         </div>
         <span class="pill ${match.status} ${winnerClass(match)}">${resultText}</span>
       </div>
@@ -464,6 +464,14 @@ function displayCourtNo(match) {
   if (!courtCount || courtCount < 1) return null;
   const roundNo = Math.max(1, Number(match.round_no || 1));
   return ((roundNo - 1) % courtCount) + 1;
+}
+
+function formatMatchTitle(match) {
+  const parts = [`第 ${match.round_no || 1} 轮`];
+  const courtNo = displayCourtNo(match);
+  if (courtNo) parts.push(`${courtNo} 号场`);
+  parts.push(match.label || MatchLabels[match.match_type] || match.match_type);
+  return parts.map(escapeHtml).join(' · ');
 }
 
 function resultForm(matchId, options = {}) {
@@ -552,27 +560,23 @@ function formatMatchTiming(match) {
   const start = new Date(match.started_at);
   if (Number.isNaN(start.getTime())) return '时间未知';
   const endValue = match.ended_at || match.finalized_at;
-  const parts = [`匹配 ${formatMatchTime(match.started_at)}`];
   if (endValue) {
     const end = new Date(endValue);
     if (!Number.isNaN(end.getTime())) {
-      parts.push(`结束 ${formatMatchTime(endValue)}`);
-      parts.push(`用时 ${formatDuration(end.getTime() - start.getTime())}`);
+      return `${formatMatchTime(match.started_at)}~${formatMatchTime(endValue)} 用时${formatDuration(end.getTime() - start.getTime())}`;
     }
   } else if (match.status === 'active') {
-    parts.push(`已进行 ${formatDuration(Date.now() - start.getTime())}`);
+    return `${formatMatchTime(match.started_at)}~现在 已进行${formatDuration(Date.now() - start.getTime())}`;
   }
-  return parts.join(' · ');
+  return `${formatMatchTime(match.started_at)}~--:--`;
 }
 
 function formatMatchTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '--:--';
-  return date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }
 
 function formatDuration(milliseconds) {
