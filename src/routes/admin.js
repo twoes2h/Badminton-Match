@@ -317,4 +317,9 @@ router.patch('/rooms/:roomId/members/:userId', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router._test = {
+  normalizeDateTime,
+  normalizeVenueInput
+};
+
 module.exports = router;

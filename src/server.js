@@ -17,6 +17,7 @@ const adminRoutes = require('./routes/admin');
 const { attachRealtime, emitRoomChanged } = require('./realtime');
 const { logEvent, requestFields } = require('./logger');
 const { finalizeTimedOutResults } = require('./services/results');
+const { healthSnapshot, repairStuckState } = require('./services/health');
 
 async function main() {
   if (config.autoMigrate) {
@@ -30,6 +31,7 @@ async function main() {
   });
   let venueCleanupRunning = false;
   let resultTimeoutRunning = false;
+  let stateRepairRunning = false;
 
   async function runVenueCleanup() {
     if (venueCleanupRunning) return;
@@ -82,9 +84,34 @@ async function main() {
     }
   }
 
+  async function runStateRepair() {
+    if (stateRepairRunning) return;
+    stateRepairRunning = true;
+    try {
+      const result = await repairStuckState();
+      if (result.timedOut.length || result.cancelledStaleMatches.length
+        || result.orphanMembersReleased || result.floatingStatusesReleased) {
+        logEvent('warn', 'state.repaired', result);
+        for (const roomId of result.roomIds) {
+          await emitRoomChanged(io, roomId);
+        }
+      }
+    } catch (error) {
+      logEvent('error', 'state.repair_failed', {
+        message: error.message,
+        code: error.code,
+        errno: error.errno,
+        sqlState: error.sqlState
+      });
+    } finally {
+      stateRepairRunning = false;
+    }
+  }
+
   await cleanupExpiredTemporaryUsers();
   await runVenueCleanup();
   await runResultTimeouts();
+  await runStateRepair();
 
   const sessionMiddleware = session({
     name: 'badminton.sid',
@@ -104,10 +131,21 @@ async function main() {
   }));
   app.use(express.json({ limit: '3mb' }));
   app.use(sessionMiddleware);
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
   app.use(express.static(path.join(process.cwd(), 'public')));
 
   attachRealtime(io, sessionMiddleware);
 
+  app.get('/api/healthz', async (req, res, next) => {
+    try {
+      res.json(await healthSnapshot({ strict: req.query.strict === '1' }));
+    } catch (error) {
+      next(error);
+    }
+  });
   app.use('/api/auth', authRoutes);
   app.use('/api/rooms', roomRoutes);
   app.use('/api/admin', adminRoutes);
@@ -159,6 +197,9 @@ async function main() {
 
   const resultTimeoutTimer = setInterval(runResultTimeouts, 1000 * 30);
   resultTimeoutTimer.unref();
+
+  const stateRepairTimer = setInterval(runStateRepair, 1000 * 60);
+  stateRepairTimer.unref();
 }
 
 main().catch((error) => {

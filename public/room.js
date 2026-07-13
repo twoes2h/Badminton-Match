@@ -253,7 +253,7 @@ function renderMembers(members) {
           </div>
         </div>
         <p class="meta">${GenderLabels[member.gender] || member.gender} · Lv.${member.skill_level} · ${member.rating} 分</p>
-        ${member.account_type === 'temporary' ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
+        ${member.account_type === 'temporary' && member.username ? `<p class="meta">用户名：${escapeHtml(member.username)} · 默认密码 000000</p>` : ''}
         <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
         <p class="meta">${member.presence_status === 'online' ? '在线' : '离线'}${member.is_blacklisted ? ' · 已拉黑' : ''}</p>
         <div class="member-card-actions">

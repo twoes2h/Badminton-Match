@@ -4,6 +4,7 @@ const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth } = require('../middleware');
 const { MATCH_TYPES, createFreeMatch, createRoundMatches } = require('../services/matching');
 const { markMatchAwaitingResult, submitMatchResult } = require('../services/results');
+const { sanitizeRoomMembers } = require('../services/privacy');
 const { emitRoomChanged } = require('../realtime');
 
 const router = express.Router();
@@ -90,7 +91,9 @@ function normalizeTemporaryMemberInput(body) {
   const username = String(body.username || '').trim();
   const gender = body.gender || 'other';
   const birthYear = body.birthYear ? Number(body.birthYear) : null;
-  const skillLevel = Number(body.skillLevel || 5);
+  const skillLevel = body.skillLevel === undefined || body.skillLevel === ''
+    ? 5
+    : Number(body.skillLevel);
   const rating = body.rating === undefined || body.rating === ''
     ? 1000
     : Math.max(0, Math.min(3000, Math.round(Number(body.rating))));
@@ -323,6 +326,8 @@ async function getRoomPayload(roomId, userId, options = {}) {
     [roomId]
   );
   const currentMember = members.find((member) => Number(member.user_id) === Number(userId)) || null;
+  const canManageMembers = Number(room.owner_user_id) === Number(userId)
+    || (await query('SELECT role FROM users WHERE id = ? LIMIT 1', [userId]))[0]?.role === 'admin';
   if (room.venue_id && !currentMember && Number(room.owner_user_id) !== Number(userId)) {
     const requesterRows = await query('SELECT role FROM users WHERE id = ? LIMIT 1', [userId]);
     if (!requesterRows[0] || requesterRows[0].role !== 'admin') {
@@ -383,7 +388,7 @@ async function getRoomPayload(roomId, userId, options = {}) {
     room: { ...room, venue },
     venue,
     member: currentMember,
-    members,
+    members: sanitizeRoomMembers(members, { canManage: canManageMembers }),
     matches: matches.map((match) => ({
       ...match,
       label: MATCH_TYPES[match.match_type] && MATCH_TYPES[match.match_type].label,
@@ -982,5 +987,13 @@ router.post('/matches/:matchId/results', requireAuth, asyncRoute(async (req, res
   if (matchRows[0]) await emitRoomChanged(req.app.get('io'), matchRows[0].room_id);
   res.json(result);
 }));
+
+router._test = {
+  normalizeUserIds,
+  normalizeMatchPreferences,
+  normalizeMatchTypes,
+  normalizeMatchDate,
+  normalizeTemporaryMemberInput
+};
 
 module.exports = router;

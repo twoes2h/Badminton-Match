@@ -34,7 +34,9 @@ function profileInput(body) {
   const displayName = String(body.displayName || '').trim();
   const gender = body.gender || 'other';
   const birthYear = body.birthYear ? Number(body.birthYear) : null;
-  const skillLevel = Number(body.skillLevel || 5);
+  const skillLevel = body.skillLevel === undefined || body.skillLevel === ''
+    ? 5
+    : Number(body.skillLevel);
 
   if (!displayName || displayName.length > 80) {
     throw new Error('昵称不能为空且不能超过 80 个字符');
@@ -92,7 +94,9 @@ router.post('/register', asyncRoute(async (req, res) => {
   const displayName = String(req.body.displayName || username).trim();
   const gender = req.body.gender || 'other';
   const birthYear = req.body.birthYear ? Number(req.body.birthYear) : null;
-  const skillLevel = Number(req.body.skillLevel || 5);
+  const skillLevel = req.body.skillLevel === undefined || req.body.skillLevel === ''
+    ? 5
+    : Number(req.body.skillLevel);
 
   if (!USERNAME_PATTERN.test(username)) {
     return res.status(400).json({ error: '用户名需为 3-32 位，可包含中文、字母、数字、下划线或短横线' });
@@ -327,5 +331,10 @@ router.post('/password', requireAuth, asyncRoute(async (req, res) => {
   req.session.user = sessionUser(user);
   res.json({ ok: true, user: req.session.user });
 }));
+
+router._test = {
+  profileInput,
+  parseAvatarImage
+};
 
 module.exports = router;
