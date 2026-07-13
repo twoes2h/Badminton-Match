@@ -7,6 +7,8 @@ const config = {
   port: Number(process.env.PORT || 3000),
   sessionSecret: process.env.SESSION_SECRET || 'dev-only-change-me',
   autoMigrate: process.env.AUTO_MIGRATE !== 'false',
+  maxOnlineUsers: Number(process.env.MAX_ONLINE_USERS || 100),
+  onlineSessionTtlMinutes: Number(process.env.ONLINE_SESSION_TTL_MINUTES || 15),
   db: {
     host: process.env.DB_HOST || '127.0.0.1',
     port: Number(process.env.DB_PORT || 3306),

@@ -1,6 +1,7 @@
 let pageUser = null;
 let createOptions = { venues: [], users: [] };
 let selectedCreateRegistrationIds = new Set();
+let currentAnnouncement = null;
 
 (async () => {
   pageUser = await requireUser();
@@ -9,6 +10,7 @@ let selectedCreateRegistrationIds = new Set();
   renderUserAction(pageUser);
   document.body.insertAdjacentHTML('beforeend', bottomNav('rooms', pageUser));
   bindRoomsPage();
+  await loadAnnouncement();
   if (pageUser.role === 'admin') await loadCreateOptions();
   await loadRooms();
 })();
@@ -20,6 +22,7 @@ function bindRoomsPage() {
   });
 
   $('#refreshRoomsBtn').addEventListener('click', () => loadRooms());
+  $('#announcementBtn').addEventListener('click', toggleAnnouncement);
   $('#toggleCreateRoomBtn').addEventListener('click', () => {
     const form = $('#createRoomForm');
     form.classList.toggle('hide');
@@ -42,6 +45,52 @@ function bindRoomsPage() {
       showMessage(error.message);
     }
   });
+}
+
+async function loadAnnouncement() {
+  try {
+    const data = await api('/api/announcements/current');
+    currentAnnouncement = data.announcement;
+    if (!currentAnnouncement) {
+      $('#announcementBtn').classList.add('hide');
+      $('#announcementCard').classList.add('hide');
+      return;
+    }
+
+    $('#announcementBtn').classList.remove('hide');
+    renderAnnouncementCard();
+    const seenKey = announcementSeenKey(currentAnnouncement);
+    if (window.localStorage.getItem(seenKey) !== '1') {
+      $('#announcementCard').classList.remove('hide');
+      window.localStorage.setItem(seenKey, '1');
+    }
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+function announcementSeenKey(announcement) {
+  return `badminton-announcement:${announcement.id}:${announcement.updated_at}`;
+}
+
+function renderAnnouncementCard() {
+  $('#announcementCard').innerHTML = `
+    <div class="card-title">
+      <h2>${escapeHtml(currentAnnouncement.title || '公告')}</h2>
+      <button id="closeAnnouncementBtn" type="button" class="secondary">收起</button>
+    </div>
+    <p>${escapeHtml(currentAnnouncement.body || '').replace(/\n/g, '<br>')}</p>
+  `;
+  $('#closeAnnouncementBtn').addEventListener('click', () => {
+    $('#announcementCard').classList.add('hide');
+  });
+}
+
+function toggleAnnouncement() {
+  if (!currentAnnouncement) return;
+  renderAnnouncementCard();
+  $('#announcementCard').classList.toggle('hide');
+  window.localStorage.setItem(announcementSeenKey(currentAnnouncement), '1');
 }
 
 async function loadCreateOptions() {

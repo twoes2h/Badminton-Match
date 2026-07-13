@@ -74,6 +74,33 @@ async function runMigrations() {
      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
   );
   await query(
+    `CREATE TABLE IF NOT EXISTS active_sessions (
+       session_id_hash CHAR(64) NOT NULL PRIMARY KEY,
+       user_id BIGINT UNSIGNED NOT NULL,
+       user_role ENUM('user','admin') NOT NULL DEFAULT 'user',
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       CONSTRAINT fk_active_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+       INDEX idx_active_sessions_seen (last_seen_at),
+       INDEX idx_active_sessions_user_role (user_role, user_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+  await query(
+    `CREATE TABLE IF NOT EXISTS announcements (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       title VARCHAR(120) NOT NULL,
+       body TEXT NOT NULL,
+       is_active TINYINT(1) NOT NULL DEFAULT 1,
+       created_by BIGINT UNSIGNED NOT NULL,
+       updated_by BIGINT UNSIGNED NOT NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       CONSTRAINT fk_announcements_creator FOREIGN KEY (created_by) REFERENCES users(id),
+       CONSTRAINT fk_announcements_updater FOREIGN KEY (updated_by) REFERENCES users(id),
+       INDEX idx_announcements_active_updated (is_active, updated_at)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+  await query(
     `ALTER TABLE rooms
      ADD COLUMN IF NOT EXISTS venue_id BIGINT UNSIGNED NULL
      AFTER sport_key`

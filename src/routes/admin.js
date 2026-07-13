@@ -2,6 +2,11 @@ const express = require('express');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth, requireAdmin } = require('../middleware');
 const { emitRoomChanged } = require('../realtime');
+const {
+  latestAnnouncement,
+  normalizeAnnouncementInput,
+  saveAnnouncement
+} = require('../services/announcements');
 
 const router = express.Router();
 const ADMIN_MEMBER_STATUSES = new Set(['idle', 'waiting', 'resting', 'busy', 'locked']);
@@ -140,7 +145,17 @@ router.patch('/users/:userId', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.get('/announcement', asyncRoute(async (req, res) => {
+  res.json({ announcement: await latestAnnouncement() });
+}));
+
+router.put('/announcement', asyncRoute(async (req, res) => {
+  const announcement = await saveAnnouncement(req.body, req.session.user.id);
+  res.json({ announcement });
+}));
+
 router.get('/venues', asyncRoute(async (req, res) => {
+  const status = ['active', 'inactive'].includes(req.query.status) ? req.query.status : 'active';
   const venues = await query(
     `SELECT
        v.*,
@@ -151,10 +166,12 @@ router.get('/venues', asyncRoute(async (req, res) => {
      LEFT JOIN rooms r
        ON r.venue_id = v.id
       AND r.status = 'active'
+     WHERE v.status = ?
      ORDER BY v.starts_at DESC, v.created_at DESC
-     LIMIT 200`
+     LIMIT 200`,
+    [status]
   );
-  res.json({ venues });
+  res.json({ venues, status });
 }));
 
 router.post('/venues', asyncRoute(async (req, res) => {
@@ -319,7 +336,8 @@ router.patch('/rooms/:roomId/members/:userId', asyncRoute(async (req, res) => {
 
 router._test = {
   normalizeDateTime,
-  normalizeVenueInput
+  normalizeVenueInput,
+  normalizeAnnouncementInput
 };
 
 module.exports = router;

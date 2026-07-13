@@ -6,6 +6,7 @@ const path = require('path');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth } = require('../middleware');
 const { markMatchAwaitingResult } = require('../services/results');
+const { loginCapacity, removeActiveSession, touchActiveSession } = require('../services/online');
 const { logEvent, requestFields } = require('../logger');
 
 const router = express.Router();
@@ -132,7 +133,20 @@ router.post('/register', asyncRoute(async (req, res) => {
     return rows[0];
   });
 
+  const capacity = await loginCapacity(created);
+  if (!capacity.ok) {
+    logEvent('warn', 'auth.register_login_limited', {
+      ...requestFields(req),
+      username,
+      userId: Number(created.id),
+      activeUsers: capacity.activeUsers,
+      limit: capacity.limit
+    });
+    return res.status(503).json({ error: '注册成功，但系统在线人数过多，请稍后再登录' });
+  }
+
   req.session.user = sessionUser(created);
+  await touchActiveSession(req.sessionID, req.session.user);
   res.status(201).json({ user: req.session.user });
 }));
 
@@ -159,8 +173,21 @@ router.post('/login', asyncRoute(async (req, res) => {
     return res.status(403).json({ error: '账号已被管理员限制登录' });
   }
 
+  const capacity = await loginCapacity(user);
+  if (!capacity.ok) {
+    logEvent('warn', 'auth.login_limited', {
+      ...requestFields(req),
+      username,
+      userId: Number(user.id),
+      activeUsers: capacity.activeUsers,
+      limit: capacity.limit
+    });
+    return res.status(503).json({ error: '系统在线人数过多，暂时限制登录，请稍后再试' });
+  }
+
   await query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [user.id]);
   req.session.user = sessionUser(user);
+  await touchActiveSession(req.sessionID, req.session.user);
   logEvent('info', 'auth.login_success', {
     ...requestFields(req),
     username,
@@ -173,6 +200,7 @@ router.post('/login', asyncRoute(async (req, res) => {
 
 router.post('/logout', requireAuth, asyncRoute(async (req, res) => {
   const userId = req.session.user.id;
+  const sessionId = req.sessionID;
   await transaction(async (conn) => {
     const activeRows = await conn.query(
       `SELECT DISTINCT current_match_id
@@ -196,6 +224,7 @@ router.post('/logout', requireAuth, asyncRoute(async (req, res) => {
     );
   });
 
+  await removeActiveSession(sessionId);
   req.session.destroy(() => {
     res.json({ ok: true });
   });

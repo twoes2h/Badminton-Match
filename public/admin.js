@@ -7,6 +7,8 @@ let adminUsers = [];
   renderUserAction(adminUser);
   document.body.insertAdjacentHTML('beforeend', bottomNav('admin', adminUser));
   $('#refreshAdminBtn').addEventListener('click', loadAdminData);
+  $('#announcementForm').addEventListener('submit', saveAnnouncement);
+  $('#toggleVenueFormBtn').addEventListener('click', toggleVenueForm);
   $('#venueForm').addEventListener('submit', createVenue);
   $$('[name="roomStatusFilter"]').forEach((input) => {
     input.addEventListener('change', loadAdminData);
@@ -20,11 +22,15 @@ let adminUsers = [];
 async function loadAdminData() {
   try {
     const roomStatus = $('[name="roomStatusFilter"]:checked').value;
-    const [roomData, userData, venueData] = await Promise.all([
+    const venueStatus = roomStatus === 'dissolved' ? 'inactive' : 'active';
+    syncAdminStatusView(roomStatus);
+    const [roomData, userData, venueData, announcementData] = await Promise.all([
       api(`/api/admin/rooms?status=${encodeURIComponent(roomStatus)}`),
       api('/api/admin/users'),
-      api('/api/admin/venues')
+      api(`/api/admin/venues?status=${encodeURIComponent(venueStatus)}`),
+      api('/api/admin/announcement')
     ]);
+    renderAnnouncement(announcementData.announcement);
     renderVenues(venueData.venues);
     renderRooms(roomData.rooms);
     adminUsers = userData.users;
@@ -34,7 +40,25 @@ async function loadAdminData() {
   }
 }
 
+function syncAdminStatusView(roomStatus) {
+  const isDissolved = roomStatus === 'dissolved';
+  $('#announcementSection').classList.toggle('hide', isDissolved);
+  $('#adminUsersSection').classList.toggle('hide', isDissolved);
+  $('#toggleVenueFormBtn').classList.toggle('hide', isDissolved);
+  $('#venueForm').classList.add('hide');
+  $('#toggleVenueFormBtn').textContent = '添加场地';
+}
+
+function renderAnnouncement(announcement) {
+  const form = $('#announcementForm');
+  form.elements.title.value = announcement ? announcement.title || '' : '';
+  form.elements.body.value = announcement ? announcement.body || '' : '';
+  form.elements.isActive.checked = !announcement || Number(announcement.is_active) === 1;
+}
+
 function renderVenues(venues) {
+  const roomStatus = $('[name="roomStatusFilter"]:checked').value;
+  const archiveMode = roomStatus === 'dissolved';
   $('#venueList').innerHTML = venues.length
     ? venues.map((venue) => `
       <article class="item">
@@ -47,9 +71,11 @@ function renderVenues(venues) {
         </div>
         ${venue.location_url ? `<a class="button secondary" href="${escapeHtml(venue.location_url)}" target="_blank" rel="noreferrer">查看位置</a>` : ''}
         ${venue.active_room_id ? `<p class="meta">当前房间：${escapeHtml(venue.active_room_name)} · ${escapeHtml(venue.active_room_code)}</p>` : ''}
-        <div class="row wrap">
-          <button type="button" class="danger" data-disable-venue="${venue.id}" ${venue.active_room_id || venue.status === 'inactive' ? 'disabled' : ''}>停用</button>
-        </div>
+        ${archiveMode ? '<p class="meta">停用记录，仅查看</p>' : `
+          <div class="row wrap">
+            <button type="button" class="danger" data-disable-venue="${venue.id}" ${venue.active_room_id || venue.status === 'inactive' ? 'disabled' : ''}>停用</button>
+          </div>
+        `}
       </article>
     `).join('')
     : '<p class="muted">暂无场地。</p>';
@@ -57,6 +83,12 @@ function renderVenues(venues) {
   $$('[data-disable-venue]').forEach((button) => {
     button.addEventListener('click', () => disableVenue(button.dataset.disableVenue));
   });
+}
+
+function toggleVenueForm() {
+  const form = $('#venueForm');
+  form.classList.toggle('hide');
+  $('#toggleVenueFormBtn').textContent = form.classList.contains('hide') ? '添加场地' : '收起';
 }
 
 function renderRooms(rooms) {
@@ -253,7 +285,28 @@ async function createVenue(event) {
     });
     form.reset();
     form.courtCount.value = 3;
+    form.classList.add('hide');
+    $('#toggleVenueFormBtn').textContent = '添加场地';
     showMessage('场地已添加');
+    await loadAdminData();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function saveAnnouncement(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await api('/api/admin/announcement', {
+      method: 'PUT',
+      body: {
+        title: form.elements.title.value,
+        body: form.elements.body.value,
+        isActive: form.elements.isActive.checked
+      }
+    });
+    showMessage('公告已保存');
     await loadAdminData();
   } catch (error) {
     showMessage(error.message);

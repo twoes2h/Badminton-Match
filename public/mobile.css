@@ -28,7 +28,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -74,7 +75,8 @@ button:not(:disabled):active,
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);
@@ -82,6 +84,10 @@ select {
   padding: 9px 10px;
   background: #fff;
   color: var(--ink);
+}
+
+textarea {
+  resize: vertical;
 }
 
 label {
@@ -209,6 +215,73 @@ h3 {
 
 .message.show {
   display: block;
+}
+
+.page-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 12px;
+}
+
+.announcement-card {
+  margin-bottom: 12px;
+}
+
+.announcement-card p {
+  line-height: 1.65;
+  white-space: normal;
+}
+
+.admin-fold {
+  padding: 0;
+  overflow: hidden;
+}
+
+.admin-fold > summary {
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-fold > summary::after {
+  content: "展开";
+  min-width: 44px;
+  color: var(--brand-dark);
+  font-size: 13px;
+  text-align: right;
+}
+
+.admin-fold[open] > summary::after {
+  content: "收起";
+}
+
+.admin-fold-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.check-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.check-row input {
+  width: 18px;
+  min-height: 18px;
 }
 
 .segmented {

@@ -1,5 +1,6 @@
 const { query, transaction } = require('../db');
 const { finalizeTimedOutResults } = require('./results');
+const { onlineSnapshot } = require('./online');
 
 const STALE_ACTIVE_HOURS = 8;
 
@@ -8,7 +9,7 @@ async function healthSnapshot(options = {}) {
   const dbStartedAt = Date.now();
   await query('SELECT 1 AS ok');
   const dbLatencyMs = Date.now() - dbStartedAt;
-  const [staleActive, staleAwaiting, orphanMembers, floatingStatuses] = await Promise.all([
+  const [staleActive, staleAwaiting, orphanMembers, floatingStatuses, online] = await Promise.all([
     query(
       `SELECT COUNT(*) AS count_value
        FROM matches
@@ -34,7 +35,8 @@ async function healthSnapshot(options = {}) {
        FROM room_members
        WHERE current_match_id IS NULL
          AND play_status IN ('in_match','awaiting_result')`
-    )
+    ),
+    onlineSnapshot()
   ]);
 
   const stuck = {
@@ -48,6 +50,7 @@ async function healthSnapshot(options = {}) {
   return {
     ok: !strict || stuckCount === 0,
     db: { ok: true, latencyMs: dbLatencyMs },
+    online,
     stuck,
     strict,
     ts: new Date().toISOString()

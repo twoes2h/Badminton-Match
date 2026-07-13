@@ -14,10 +14,12 @@ const {
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
 const adminRoutes = require('./routes/admin');
+const announcementRoutes = require('./routes/announcements');
 const { attachRealtime, emitRoomChanged } = require('./realtime');
 const { logEvent, requestFields } = require('./logger');
 const { finalizeTimedOutResults } = require('./services/results');
 const { healthSnapshot, repairStuckState } = require('./services/health');
+const { touchActiveSession } = require('./services/online');
 
 async function main() {
   if (config.autoMigrate) {
@@ -135,6 +137,20 @@ async function main() {
     res.set('Cache-Control', 'no-store');
     next();
   });
+  app.use('/api', (req, res, next) => {
+    if (req.session && req.session.user) {
+      touchActiveSession(req.sessionID, req.session.user).catch((error) => {
+        logEvent('error', 'online.touch_failed', {
+          ...requestFields(req),
+          message: error.message,
+          code: error.code,
+          errno: error.errno,
+          sqlState: error.sqlState
+        });
+      });
+    }
+    next();
+  });
   app.use(express.static(path.join(process.cwd(), 'public')));
 
   attachRealtime(io, sessionMiddleware);
@@ -147,6 +163,7 @@ async function main() {
     }
   });
   app.use('/api/auth', authRoutes);
+  app.use('/api/announcements', announcementRoutes);
   app.use('/api/rooms', roomRoutes);
   app.use('/api/admin', adminRoutes);
 
