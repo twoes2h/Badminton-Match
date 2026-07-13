@@ -128,6 +128,7 @@ async function main() {
   });
 
   app.set('io', io);
+  app.set('sessionStore', sessionMiddleware.store);
   app.use(helmet({
     contentSecurityPolicy: false
   }));

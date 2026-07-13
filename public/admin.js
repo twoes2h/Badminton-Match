@@ -240,6 +240,9 @@ function renderUsers(users) {
   $$('[data-role-user]').forEach((button) => {
     button.addEventListener('click', () => setRole(button.dataset.roleUser, button.dataset.roleValue));
   });
+  $$('[data-force-logout]').forEach((button) => {
+    button.addEventListener('click', () => forceLogout(button.dataset.forceLogout));
+  });
 }
 
 function renderUserCard(user) {
@@ -251,6 +254,7 @@ function renderUserCard(user) {
   const accountType = user.account_type === 'temporary' ? '临时' : '普通';
   const roleLabel = user.role === 'admin' ? '管理员' : '普通成员';
   const lockLabel = user.is_blacklisted ? '已限制登录' : '可登录';
+  const self = Number(user.id) === Number(adminUser.id);
 
   return `
     <article class="admin-user-card ${user.is_blacklisted ? 'is-locked' : ''}">
@@ -258,18 +262,18 @@ function renderUserCard(user) {
       <div class="admin-user-body">
         <div>
           <strong>${escapeHtml(user.display_name)} ${ratingBadgeHtml(user.rating)}</strong>
-          <p class="meta">${escapeHtml(user.username)} · ${lockLabel}</p>
+          <p class="meta">${escapeHtml(user.username)} · ${lockLabel} · ${roleLabel}${user.account_type === 'temporary' ? ' · 临时' : ''}</p>
         </div>
-        <p class="admin-user-info">积分等级 ${user.rating} · ${GenderLabels[user.gender] || '其他'}</p>
-        <p class="admin-user-info">技术等级 ${user.skill_level} · 类型：${accountType}、${roleLabel}</p>
-        ${tags.length ? `<p class="meta">${tags.join(' · ')}</p>` : '<p class="meta">正常</p>'}
+        <p class="admin-user-info">技术 ${user.skill_level}　积分 ${user.rating} · ${GenderLabels[user.gender] || '其他'}</p>
+        <p class="meta">${tags.length ? tags.join(' · ') : `类型：${accountType}`}</p>
         <div class="admin-user-actions">
-          <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${Number(user.id) === Number(adminUser.id) ? 'disabled' : ''}>
+          <button type="button" class="secondary" data-role-user="${user.id}" data-role-value="${user.role === 'admin' ? 'user' : 'admin'}" ${self ? 'disabled' : ''}>
             ${user.role === 'admin' ? '取消管理' : '任命管理'}
           </button>
           <button type="button" class="${user.is_blacklisted ? 'secondary' : 'danger'}" data-blacklist="${user.id}" data-value="${user.is_blacklisted ? '0' : '1'}">
             ${user.is_blacklisted ? '解除拉黑' : '拉黑'}
           </button>
+          <button type="button" class="admin-force-button" title="强制下线" aria-label="强制下线" data-force-logout="${user.id}" ${self ? 'disabled' : ''}>×</button>
         </div>
       </div>
     </article>
@@ -373,6 +377,19 @@ async function setRole(userId, role) {
       method: 'PATCH',
       body: { role }
     });
+    await loadAdminData();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function forceLogout(userId) {
+  if (!window.confirm('确认强制这个用户下线并退出房间？')) return;
+  try {
+    const data = await api(`/api/admin/users/${userId}/force-logout`, {
+      method: 'POST'
+    });
+    showMessage(`已强制下线，清理 ${data.destroyedSessions || 0} 个登录会话`);
     await loadAdminData();
   } catch (error) {
     showMessage(error.message);

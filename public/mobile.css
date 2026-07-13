@@ -340,20 +340,20 @@ h3 {
 
 .admin-user-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 8px;
   margin-top: 12px;
 }
 
 .admin-user-card {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
+  grid-template-columns: 132px minmax(0, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  padding: 14px;
+  padding: 8px 10px;
 }
 
 .admin-user-card.is-locked {
@@ -364,7 +364,16 @@ h3 {
 .admin-user-body {
   min-width: 0;
   display: grid;
-  gap: 7px;
+  gap: 5px;
+}
+
+.admin-user-body > div {
+  min-width: 0;
+}
+
+.admin-user-body strong {
+  font-size: 20px;
+  line-height: 1.15;
 }
 
 .admin-user-body strong,
@@ -377,18 +386,38 @@ h3 {
 
 .admin-user-info {
   color: var(--ink);
-  font-size: 13px;
+  font-size: 18px;
+  line-height: 1.2;
 }
 
 .admin-user-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 110px));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-top: 4px;
 }
 
 .admin-user-actions button {
-  min-height: 44px;
-  padding: 8px 10px;
+  flex: 1 1 98px;
+  min-height: 42px;
+  padding: 8px 14px;
+}
+
+.admin-force-button {
+  flex: 0 0 48px;
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  min-height: 48px;
+  border: 3px solid #111;
+  border-radius: 50%;
+  background: #fff;
+  color: #111;
+  box-shadow: none;
+  font-size: 36px;
+  line-height: 1;
+  padding: 0;
 }
 
 .avatar {
@@ -427,10 +456,10 @@ h3 {
 }
 
 .avatar.admin-avatar {
-  width: 118px;
-  height: 118px;
+  width: 132px;
+  height: 132px;
   margin: 0;
-  border-radius: 18px;
+  border-radius: 16px;
   font-size: 30px;
 }
 
@@ -892,19 +921,43 @@ small {
   }
 
   .admin-user-card {
-    grid-template-columns: 96px minmax(0, 1fr);
-    gap: 12px;
-    padding: 12px;
+    grid-template-columns: 108px minmax(0, 1fr);
+    gap: 10px;
+    padding: 7px 8px;
   }
 
   .avatar.admin-avatar {
-    width: 96px;
-    height: 96px;
+    width: 108px;
+    height: 108px;
     border-radius: 16px;
   }
 
+  .admin-user-body strong {
+    font-size: 18px;
+  }
+
+  .admin-user-info {
+    font-size: 15px;
+  }
+
   .admin-user-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .admin-user-actions button {
+    flex-basis: 76px;
+    min-height: 38px;
+    padding: 7px 10px;
+    font-size: 13px;
+  }
+
+  .admin-force-button {
+    flex-basis: 42px;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    min-height: 42px;
+    font-size: 30px;
   }
 
   .compact-search .row {

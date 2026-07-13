@@ -2,6 +2,9 @@ const express = require('express');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth, requireAdmin } = require('../middleware');
 const { emitRoomChanged } = require('../realtime');
+const { markMatchAwaitingResult } = require('../services/results');
+const { removeUserActiveSessions } = require('../services/online');
+const { destroyUserSessions } = require('../services/sessions');
 const {
   latestAnnouncement,
   normalizeAnnouncementInput,
@@ -87,6 +90,34 @@ async function dissolveRoom(conn, roomId) {
   );
 }
 
+async function forceUserOffline(conn, userId) {
+  const memberRows = await conn.query(
+    `SELECT DISTINCT room_id, current_match_id
+     FROM room_members
+     WHERE user_id = ?`,
+    [userId]
+  );
+  const roomIds = [...new Set(memberRows.map((row) => Number(row.room_id)).filter(Boolean))];
+  const matchIds = [...new Set(memberRows.map((row) => Number(row.current_match_id)).filter(Boolean))];
+
+  for (const matchId of matchIds) {
+    await markMatchAwaitingResult(conn, matchId);
+  }
+
+  await conn.query(
+    `UPDATE room_members
+     SET presence_status = 'offline',
+         play_status = CASE
+           WHEN current_match_id IS NULL THEN 'idle'
+           ELSE 'awaiting_result'
+         END
+     WHERE user_id = ?`,
+    [userId]
+  );
+
+  return roomIds;
+}
+
 router.get('/users', asyncRoute(async (req, res) => {
   const users = await query(
     `SELECT
@@ -143,6 +174,35 @@ router.patch('/users/:userId', asyncRoute(async (req, res) => {
   });
 
   res.json({ ok: true });
+}));
+
+router.post('/users/:userId/force-logout', asyncRoute(async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(400).json({ error: '用户不存在' });
+  }
+  if (Number(userId) === Number(req.session.user.id)) {
+    return res.status(400).json({ error: '不能强制下线自己' });
+  }
+
+  const roomIds = await transaction(async (conn) => {
+    const rows = await conn.query('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+    if (!rows[0]) throw new Error('用户不存在');
+    return forceUserOffline(conn, userId);
+  });
+
+  const destroyedSessions = await destroyUserSessions(req.app.get('sessionStore'), userId);
+  const removedActiveSessions = await removeUserActiveSessions(userId);
+  for (const roomId of roomIds) {
+    await emitRoomChanged(req.app.get('io'), roomId);
+  }
+
+  res.json({
+    ok: true,
+    destroyedSessions,
+    removedActiveSessions,
+    roomIds
+  });
 }));
 
 router.get('/announcement', asyncRoute(async (req, res) => {
@@ -337,7 +397,8 @@ router.patch('/rooms/:roomId/members/:userId', asyncRoute(async (req, res) => {
 router._test = {
   normalizeDateTime,
   normalizeVenueInput,
-  normalizeAnnouncementInput
+  normalizeAnnouncementInput,
+  forceUserOffline
 };
 
 module.exports = router;

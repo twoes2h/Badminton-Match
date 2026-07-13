@@ -1,6 +1,7 @@
 const assert = require('assert');
 const { canLoginByCapacity } = require('../src/services/online');
 const { normalizeAnnouncementInput } = require('../src/services/announcements');
+const { parseStoredSession, sessionBelongsToUser } = require('../src/services/sessions');
 const { pool } = require('../src/db');
 
 assert.strictEqual(canLoginByCapacity({
@@ -52,6 +53,11 @@ assert.strictEqual(normalizeAnnouncementInput({
   body: '',
   isActive: false
 }).title, '公告');
+
+assert.deepStrictEqual(parseStoredSession('{"user":{"id":9}}'), { user: { id: 9 } });
+assert.strictEqual(parseStoredSession('{bad json'), null);
+assert.strictEqual(sessionBelongsToUser({ user: { id: 9 } }, 9), true);
+assert.strictEqual(sessionBelongsToUser({ user: { id: 8 } }, 9), false);
 
 pool.end()
   .then(() => {

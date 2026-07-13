@@ -85,6 +85,15 @@ async function removeActiveSession(sessionId) {
   );
 }
 
+async function removeUserActiveSessions(userId) {
+  if (!userId) return 0;
+  const result = await query(
+    'DELETE FROM active_sessions WHERE user_id = ?',
+    [userId]
+  );
+  return Number(result.affectedRows || 0);
+}
+
 async function onlineSnapshot() {
   return transaction(async (conn) => {
     await cleanupStaleSessions(conn);
@@ -112,6 +121,7 @@ module.exports = {
   loginCapacity,
   onlineSnapshot,
   removeActiveSession,
+  removeUserActiveSessions,
   sessionHash,
   touchActiveSession
 };
