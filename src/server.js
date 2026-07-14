@@ -19,7 +19,7 @@ const { attachRealtime, emitRoomChanged } = require('./realtime');
 const { logEvent, requestFields } = require('./logger');
 const { finalizeTimedOutResults } = require('./services/results');
 const { healthSnapshot, repairStuckState } = require('./services/health');
-const { touchActiveSession } = require('./services/online');
+const { onlineSnapshot, touchActiveSession } = require('./services/online');
 
 async function main() {
   if (config.autoMigrate) {
@@ -218,6 +218,18 @@ async function main() {
 
   const stateRepairTimer = setInterval(runStateRepair, 1000 * 60);
   stateRepairTimer.unref();
+
+  const onlineCleanupTimer = setInterval(() => {
+    onlineSnapshot().catch((error) => {
+      logEvent('error', 'online.cleanup_failed', {
+        message: error.message,
+        code: error.code,
+        errno: error.errno,
+        sqlState: error.sqlState
+      });
+    });
+  }, 1000 * 60);
+  onlineCleanupTimer.unref();
 }
 
 main().catch((error) => {

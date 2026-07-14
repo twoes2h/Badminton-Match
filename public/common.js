@@ -57,7 +57,7 @@ function showMessage(text) {
   box.classList.toggle('show', Boolean(text));
   window.clearTimeout(showMessage.timer);
   if (text) {
-    showMessage.timer = window.setTimeout(() => showMessage(''), 4200);
+    showMessage.timer = window.setTimeout(() => showMessage(''), 1600);
   }
 }
 

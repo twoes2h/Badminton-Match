@@ -15,6 +15,7 @@ function sanitizeRoomMember(member, options = {}) {
     'play_status',
     'match_preference',
     'match_preferences',
+    'match_pool_joined_at',
     'current_match_id',
     'consecutive_play_count',
     'rest_streak',

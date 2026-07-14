@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS room_members (
   play_status ENUM('idle','waiting','resting','busy','in_match','awaiting_result','locked') NOT NULL DEFAULT 'idle',
   match_preference ENUM('md','wd','xd','ms','ws','xs','any') NOT NULL DEFAULT 'any',
   match_preferences VARCHAR(64) NOT NULL DEFAULT 'any',
+  match_pool_joined_at DATETIME NULL,
   current_match_id BIGINT UNSIGNED NULL,
   consecutive_play_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   rest_streak SMALLINT UNSIGNED NOT NULL DEFAULT 0,
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS room_members (
   CONSTRAINT fk_room_members_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
   CONSTRAINT fk_room_members_user FOREIGN KEY (user_id) REFERENCES users(id),
   INDEX idx_room_members_status (room_id, presence_status, play_status),
+  INDEX idx_room_members_pool (room_id, play_status, match_pool_joined_at),
   INDEX idx_room_members_match (current_match_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -133,6 +135,36 @@ CREATE TABLE IF NOT EXISTS match_results (
   UNIQUE KEY uq_match_result_user (match_id, user_id),
   CONSTRAINT fk_match_results_match FOREIGN KEY (match_id) REFERENCES matches(id) ON DELETE CASCADE,
   CONSTRAINT fk_match_results_user FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS free_match_proposals (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  room_id BIGINT UNSIGNED NOT NULL,
+  match_type ENUM('md','wd','xd','ms','ws','xs') NOT NULL,
+  court_no TINYINT UNSIGNED NULL,
+  round_no INT UNSIGNED NOT NULL DEFAULT 1,
+  status ENUM('pending','accepted','expired','cancelled') NOT NULL DEFAULT 'pending',
+  created_by BIGINT UNSIGNED NOT NULL,
+  accepted_match_id BIGINT UNSIGNED NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  CONSTRAINT fk_free_match_proposals_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+  CONSTRAINT fk_free_match_proposals_creator FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_free_match_proposals_match FOREIGN KEY (accepted_match_id) REFERENCES matches(id) ON DELETE SET NULL,
+  INDEX idx_free_match_proposals_room_status (room_id, status, expires_at),
+  INDEX idx_free_match_proposals_match (accepted_match_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS free_match_proposal_players (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  proposal_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  team ENUM('red','blue') NOT NULL,
+  accepted_at DATETIME NULL,
+  UNIQUE KEY uq_free_match_proposal_user (proposal_id, user_id),
+  CONSTRAINT fk_free_match_proposal_players_proposal FOREIGN KEY (proposal_id) REFERENCES free_match_proposals(id) ON DELETE CASCADE,
+  CONSTRAINT fk_free_match_proposal_players_user FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_free_match_proposal_players_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS rating_events (

@@ -20,7 +20,8 @@ const AVATAR_MAX_PIXELS = 12 * 1000 * 1000;
 const AVATAR_TYPES = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
-  'image/webp': 'webp'
+  'image/webp': 'webp',
+  'image/gif': 'gif'
 };
 
 function sessionUser(user) {
@@ -63,7 +64,7 @@ function profileInput(body) {
 
 function parseAvatarImage(imageData) {
   const raw = String(imageData || '');
-  const match = raw.match(/^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/=\s]+)$/);
+  const match = raw.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([a-zA-Z0-9+/=\s]+)$/);
   if (!match) throw new Error('头像文件格式不正确');
 
   const mimeType = match[1];
@@ -75,7 +76,8 @@ function parseAvatarImage(imageData) {
 
   const valid = (mimeType === 'image/jpeg' && buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
     || (mimeType === 'image/png' && buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
-    || (mimeType === 'image/webp' && buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP');
+    || (mimeType === 'image/webp' && buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP')
+    || (mimeType === 'image/gif' && buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii')));
   if (!valid) throw new Error('头像文件内容不正确');
 
   return { buffer, extension, mimeType };
@@ -90,6 +92,26 @@ async function normalizeAvatarImage(image) {
   }
 
   try {
+    const metadata = await sharp(image.buffer, {
+      limitInputPixels: AVATAR_MAX_PIXELS,
+      animated: image.mimeType === 'image/gif'
+    }).metadata();
+    const isAnimatedGif = image.mimeType === 'image/gif' && Number(metadata.pages || 1) > 1;
+    if (isAnimatedGif
+      && image.buffer.length <= AVATAR_MAX_BYTES
+      && Number(metadata.width || 0) <= AVATAR_OUTPUT_SIZE
+      && Number(metadata.height || 0) <= AVATAR_OUTPUT_SIZE) {
+      return {
+        buffer: image.buffer,
+        extension: 'gif',
+        mimeType: 'image/gif',
+        width: Number(metadata.width || 0),
+        height: Number(metadata.height || 0),
+        originalMimeType: image.mimeType,
+        originalSize: image.buffer.length
+      };
+    }
+
     const output = await sharp(image.buffer, {
       limitInputPixels: AVATAR_MAX_PIXELS,
       animated: false
@@ -256,7 +278,8 @@ router.post('/logout', requireAuth, asyncRoute(async (req, res) => {
            play_status = CASE
              WHEN current_match_id IS NULL THEN 'idle'
              ELSE 'awaiting_result'
-           END
+           END,
+           match_pool_joined_at = NULL
        WHERE user_id = ?`,
       [userId]
     );

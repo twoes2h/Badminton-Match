@@ -112,12 +112,18 @@ async function runMigrations() {
      AFTER match_preference`
   );
   await query(
+    `ALTER TABLE room_members
+     ADD COLUMN IF NOT EXISTS match_pool_joined_at DATETIME NULL
+     AFTER match_preferences`
+  );
+  await query(
     `UPDATE room_members
      SET match_preferences = match_preference
      WHERE match_preferences IN ('', 'any')
        AND match_preference <> 'any'`
   );
   await query('CREATE INDEX IF NOT EXISTS idx_rooms_status_owner ON rooms (status, owner_user_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_room_members_pool ON room_members (room_id, play_status, match_pool_joined_at)');
   await query('CREATE INDEX IF NOT EXISTS idx_matches_room_started_status ON matches (room_id, started_at, status)');
   await query('CREATE INDEX IF NOT EXISTS idx_matches_status_ended ON matches (status, ended_at)');
   await query('CREATE INDEX IF NOT EXISTS idx_match_players_user_match ON match_players (user_id, match_id)');
@@ -145,6 +151,38 @@ async function runMigrations() {
     `ALTER TABLE match_results
      ADD COLUMN IF NOT EXISTS verdict ENUM('red','blue','draw','terminated') NULL
      AFTER outcome`
+  );
+  await query(
+    `CREATE TABLE IF NOT EXISTS free_match_proposals (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       room_id BIGINT UNSIGNED NOT NULL,
+       match_type ENUM('md','wd','xd','ms','ws','xs') NOT NULL,
+       court_no TINYINT UNSIGNED NULL,
+       round_no INT UNSIGNED NOT NULL DEFAULT 1,
+       status ENUM('pending','accepted','expired','cancelled') NOT NULL DEFAULT 'pending',
+       created_by BIGINT UNSIGNED NOT NULL,
+       accepted_match_id BIGINT UNSIGNED NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       expires_at DATETIME NOT NULL,
+       CONSTRAINT fk_free_match_proposals_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+       CONSTRAINT fk_free_match_proposals_creator FOREIGN KEY (created_by) REFERENCES users(id),
+       CONSTRAINT fk_free_match_proposals_match FOREIGN KEY (accepted_match_id) REFERENCES matches(id) ON DELETE SET NULL,
+       INDEX idx_free_match_proposals_room_status (room_id, status, expires_at),
+       INDEX idx_free_match_proposals_match (accepted_match_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+  await query(
+    `CREATE TABLE IF NOT EXISTS free_match_proposal_players (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       proposal_id BIGINT UNSIGNED NOT NULL,
+       user_id BIGINT UNSIGNED NOT NULL,
+       team ENUM('red','blue') NOT NULL,
+       accepted_at DATETIME NULL,
+       UNIQUE KEY uq_free_match_proposal_user (proposal_id, user_id),
+       CONSTRAINT fk_free_match_proposal_players_proposal FOREIGN KEY (proposal_id) REFERENCES free_match_proposals(id) ON DELETE CASCADE,
+       CONSTRAINT fk_free_match_proposal_players_user FOREIGN KEY (user_id) REFERENCES users(id),
+       INDEX idx_free_match_proposal_players_user (user_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
   );
   await query(
     `UPDATE users

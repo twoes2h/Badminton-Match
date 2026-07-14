@@ -21,10 +21,28 @@ function canLoginByCapacity({ role, activeUsers, userAlreadyActive, limit }) {
 }
 
 async function cleanupStaleSessions(conn) {
+  const staleRows = await conn.query(
+    `SELECT DISTINCT user_id
+     FROM active_sessions
+     WHERE last_seen_at < DATE_SUB(NOW(), INTERVAL ${staleMinutes()} MINUTE)`
+  );
   await conn.query(
     `DELETE FROM active_sessions
      WHERE last_seen_at < DATE_SUB(NOW(), INTERVAL ${staleMinutes()} MINUTE)`
   );
+
+  const userIds = staleRows.map((row) => Number(row.user_id)).filter(Boolean);
+  if (userIds.length) {
+    await conn.query(
+      `UPDATE room_members rm
+       LEFT JOIN active_sessions active
+         ON active.user_id = rm.user_id
+       SET rm.presence_status = 'offline'
+       WHERE rm.user_id IN (${userIds.map(() => '?').join(',')})
+         AND active.user_id IS NULL`,
+      userIds
+    );
+  }
 }
 
 async function loginCapacity(user) {
@@ -61,20 +79,24 @@ async function loginCapacity(user) {
 
 async function touchActiveSession(sessionId, user) {
   if (!sessionId || !user || !user.id) return;
-  await query(
-    `INSERT INTO active_sessions
-       (session_id_hash, user_id, user_role, created_at, last_seen_at)
-     VALUES (?, ?, ?, NOW(), NOW())
-     ON DUPLICATE KEY UPDATE
-       user_id = VALUES(user_id),
-       user_role = VALUES(user_role),
-       last_seen_at = NOW()`,
-    [
-      sessionHash(sessionId),
-      user.id,
-      user.role === 'admin' ? 'admin' : 'user'
-    ]
-  );
+  await transaction(async (conn) => {
+    await cleanupStaleSessions(conn);
+    await conn.query(
+      `INSERT INTO active_sessions
+         (session_id_hash, user_id, user_role, created_at, last_seen_at)
+       VALUES (?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         user_id = VALUES(user_id),
+         user_role = VALUES(user_role),
+         last_seen_at = NOW()`,
+      [
+        sessionHash(sessionId),
+        user.id,
+        user.role === 'admin' ? 'admin' : 'user'
+      ]
+    );
+    await conn.query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [user.id]);
+  });
 }
 
 async function removeActiveSession(sessionId) {

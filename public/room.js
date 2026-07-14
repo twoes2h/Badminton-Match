@@ -1,5 +1,6 @@
 const roomId = Number(queryParam('id'));
 const MATCH_CHECK_KEYS = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
+const COURT_MODE_KEYS = ['any', 'xd', 'md', 'wd', 'ms', 'ws', 'xs'];
 let pageUser = null;
 let roomPayload = null;
 let socket = null;
@@ -78,24 +79,29 @@ async function loadRoom() {
 }
 
 function renderRoom(payload) {
-  const { room, member, members, matches } = payload;
+  const { room, member, members, matches, freeProposals = [] } = payload;
   $('#roomTitle').textContent = room.name;
   $('#roomMeta').textContent = `${room.code} · ${room.court_count} 场地 · ${room.mode === 'round' ? '固定场次' : '自由匹配'}${room.venue_id && room.venue ? ` · ${room.venue.name} · ${formatVenueRange(room.venue)}` : ''}`;
   const isOwner = Number(room.owner_user_id) === pageUser.id;
   const canManageMembers = isOwner || pageUser.role === 'admin';
   renderVenueInfo(room.venue);
 
-  renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any');
+  renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any', member && member.gender);
   renderStatus(member);
-  renderFreeMatchChecks();
   renderCourtModes(room.court_count);
+  const freeSubmit = $('#freeMatchForm button[type="submit"]');
+  const isInFreePool = member && member.play_status === 'waiting' && member.match_pool_joined_at;
+  if (freeSubmit) freeSubmit.textContent = isInFreePool ? '退出匹配池' : '参与匹配';
   renderMembers(members);
   renderMatches(matches);
+  renderFreeProposals(freeProposals);
   renderRoomRegistrationList();
 
   $$('[data-mode-panel]').forEach((panel) => {
     panel.classList.toggle('hide', panel.dataset.modePanel !== room.mode);
   });
+  $('#roundMatchForm').classList.toggle('hide', room.mode !== 'round' || !canManageMembers);
+  $('#freeMatchForm').classList.toggle('hide', room.mode !== 'free' || !member);
   $('#stateForm').classList.toggle('hide', !member);
   $('#leaveRoomBtn').classList.toggle('hide', isOwner || !member);
   $('#dissolveRoomBtn').classList.toggle('hide', !isOwner && pageUser.role !== 'admin');
@@ -141,11 +147,18 @@ function renderStatus(member) {
   if (radio) radio.checked = true;
 }
 
-function renderPreferenceChecks(raw) {
+function allowedMatchKeysForGender(gender) {
+  if (gender === 'male') return ['md', 'xd', 'ms', 'xs'];
+  if (gender === 'female') return ['wd', 'xd', 'ws', 'xs'];
+  return MATCH_CHECK_KEYS;
+}
+
+function renderPreferenceChecks(raw, gender) {
+  const keys = allowedMatchKeysForGender(gender);
   const values = matchPreferenceValues(raw);
   const selected = values.includes('any') ? new Set() : new Set(values);
   renderCheckGroup($('#preferenceChecks'), {
-    keys: MATCH_CHECK_KEYS,
+    keys,
     name: 'matchPreferences',
     prefix: 'pref',
     selected
@@ -175,7 +188,8 @@ function checkedValues(name) {
 
 function selectedPreferences() {
   const values = checkedValues('matchPreferences');
-  return normalizeSelectedMatchTypes(values);
+  const gender = roomPayload && roomPayload.member && roomPayload.member.gender;
+  return normalizeSelectedMatchTypes(values, allowedMatchKeysForGender(gender));
 }
 
 function selectedFreeMatchTypes(withDefault = true) {
@@ -184,9 +198,9 @@ function selectedFreeMatchTypes(withDefault = true) {
   return normalized.length || !withDefault ? normalized : ['any'];
 }
 
-function normalizeSelectedMatchTypes(values) {
-  const unique = [...new Set(values.filter((value) => MATCH_CHECK_KEYS.includes(value)))];
-  if (unique.length === 0 || unique.length === MATCH_CHECK_KEYS.length) return ['any'];
+function normalizeSelectedMatchTypes(values, allowedKeys = MATCH_CHECK_KEYS) {
+  const unique = [...new Set(values.filter((value) => allowedKeys.includes(value)))];
+  if (unique.length === 0 || unique.length === allowedKeys.length) return ['any'];
   return unique;
 }
 
@@ -196,12 +210,66 @@ function renderCourtModes(count) {
     <label>
       ${index + 1} 号场
       <select name="courtMode">
-        ${['xd', 'md', 'wd', 'ms', 'ws', 'xs'].map((key) => `
+        ${COURT_MODE_KEYS.map((key) => `
           <option value="${key}" ${current[index] === key ? 'selected' : ''}>${MatchLabels[key]}</option>
         `).join('')}
       </select>
     </label>
   `).join('');
+}
+
+function renderFreeProposals(proposals) {
+  const container = $('#freeProposalList');
+  if (!container) return;
+  container.innerHTML = proposals.length
+    ? proposals.map(renderFreeProposalCard).join('')
+    : '';
+  $$('[data-accept-proposal]').forEach((button) => {
+    button.addEventListener('click', () => acceptFreeProposal(button.dataset.acceptProposal));
+  });
+}
+
+function renderFreeProposalCard(proposal) {
+  const players = proposal.players || [];
+  const red = players.filter((player) => player.team === 'red');
+  const blue = players.filter((player) => player.team === 'blue');
+  const me = players.find((player) => Number(player.user_id) === pageUser.id);
+  const acceptedCount = players.filter((player) => player.accepted_at).length;
+  const secondsLeft = Math.max(0, Math.ceil((new Date(proposal.expires_at).getTime() - Date.now()) / 1000));
+  const canAccept = me && !me.accepted_at && secondsLeft > 0;
+
+  return `
+    <article class="item free-proposal">
+      <div class="item-head">
+        <div>
+          <strong>${proposal.court_no || '-'} 号场 · ${escapeHtml(proposal.label || MatchLabels[proposal.match_type] || proposal.match_type)}</strong>
+          <p class="meta">${secondsLeft} 秒内同意 · ${acceptedCount}/${players.length}</p>
+        </div>
+        ${canAccept ? `<button type="button" data-accept-proposal="${proposal.id}">同意</button>` : '<span class="pill waiting">等待同意</span>'}
+      </div>
+      <div class="team-board">
+        <div class="team red">
+          ${red.map(proposalPlayerLine).join('')}
+        </div>
+        <div class="team blue">
+          ${blue.map(proposalPlayerLine).join('')}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function proposalPlayerLine(player) {
+  const isMine = Number(player.user_id) === pageUser.id;
+  return `
+    <div class="match-player ${isMine ? 'is-mine' : ''}">
+      ${miniAvatarHtml(player)}
+      <div>
+        <strong>${escapeHtml(player.display_name)} ${ratingBadgeHtml(player.rating)}</strong>
+        <small>Lv.${player.skill_level} · ${player.accepted_at ? '已同意' : '等待'}</small>
+      </div>
+    </div>
+  `;
 }
 
 function renderRoomRegistrationList() {
@@ -394,8 +462,9 @@ function renderMatchCard(match) {
   const isOwner = room && Number(room.owner_user_id) === pageUser.id;
   const allTemporary = match.players.length > 0 && match.players.every((player) => player.account_type === 'temporary');
   const canJudgeAllTemporary = allTemporary && (isOwner || pageUser.role === 'admin');
+  const canForceFinish = (isOwner || pageUser.role === 'admin') && match.status === 'active';
   const isRealPlayer = me && me.account_type !== 'temporary';
-  const canAct = (isRealPlayer || canJudgeAllTemporary) && ['active', 'awaiting_result'].includes(match.status);
+  const canAct = (isRealPlayer || canJudgeAllTemporary || canForceFinish) && ['active', 'awaiting_result'].includes(match.status);
   const needsResult = match.status === 'awaiting_result'
     && ((isRealPlayer && !me.result_submitted) || canJudgeAllTemporary);
   const submitted = isRealPlayer && match.status === 'awaiting_result' && me.result_submitted;
@@ -648,6 +717,24 @@ async function saveState(event) {
 async function createFreeMatch(event) {
   event.preventDefault();
   try {
+    const member = roomPayload && roomPayload.member;
+    const isInPool = member && member.play_status === 'waiting' && member.match_pool_joined_at;
+    const poolData = await api(`/api/rooms/${roomId}/match/free${isInPool ? '/leave' : ''}`, {
+      method: 'POST',
+      body: {}
+    });
+    if (isInPool) {
+      showMessage('已退出匹配池');
+    } else if (poolData.proposals && poolData.proposals.length) {
+      showMessage('匹配成功，请等待所有人同意');
+    } else if (poolData.status === 'waiting_court') {
+      showMessage('场地已满，已进入等待');
+    } else {
+      showMessage('已加入匹配池');
+    }
+    await loadRoom();
+    return;
+    /*
     const data = await api(`/api/rooms/${roomId}/match/free`, {
       method: 'POST',
       body: { matchTypes: selectedFreeMatchTypes() }
@@ -655,6 +742,18 @@ async function createFreeMatch(event) {
     showMessage(`已创建 ${MatchLabels[data.match.matchType] || '比赛'} 匹配`);
     await loadRoom();
     $('[data-tab="matchesPanel"]').click();
+    */
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function acceptFreeProposal(proposalId) {
+  try {
+    const data = await api(`/api/rooms/match-proposals/${proposalId}/accept`, { method: 'POST' });
+    showMessage(data.status === 'matched' ? '比赛已开始' : '已同意，等待其他成员');
+    await loadRoom();
+    if (data.status === 'matched') $('[data-tab="matchesPanel"]').click();
   } catch (error) {
     showMessage(error.message);
   }

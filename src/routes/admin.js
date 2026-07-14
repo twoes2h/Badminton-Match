@@ -385,10 +385,14 @@ router.patch('/rooms/:roomId/members/:userId', asyncRoute(async (req, res) => {
   await query(
     `UPDATE room_members
      SET play_status = ?,
+         match_pool_joined_at = CASE
+           WHEN ? = 'waiting' THEN COALESCE(match_pool_joined_at, NOW())
+           ELSE NULL
+         END,
          current_match_id = CASE WHEN ? IN ('idle','waiting','resting','busy','locked') THEN NULL ELSE current_match_id END
      WHERE room_id = ?
        AND user_id = ?`,
-    [playStatus, playStatus, roomId, userId]
+    [playStatus, playStatus, playStatus, roomId, userId]
   );
   await emitRoomChanged(req.app.get('io'), roomId);
   res.json({ ok: true });

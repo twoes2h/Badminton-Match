@@ -10,6 +10,8 @@ const MATCH_TYPES = {
 };
 
 const PLAYABLE_STATUSES = new Set(['idle', 'waiting', 'resting']);
+const ROUND_PLAYABLE_STATUSES = new Set(['idle', 'waiting', 'resting']);
+const ALL_MATCH_TYPE_KEYS = Object.keys(MATCH_TYPES);
 
 function parseMatchPreferences(member) {
   const raw = member.match_preferences || member.match_preference || 'any';
@@ -114,7 +116,10 @@ function topByGender(members, gender, limit) {
     .slice(0, limit);
 }
 
-async function loadEligibleMembers(conn, roomId, matchType, excludedIds = []) {
+async function loadEligibleMembers(conn, roomId, matchType, excludedIds = [], options = {}) {
+  const includeOffline = Boolean(options.includeOffline);
+  const requirePreferences = options.requirePreferences !== false;
+  const allowedStatuses = options.allowedStatuses || PLAYABLE_STATUSES;
   const rows = await conn.query(
     `SELECT
        rm.room_id,
@@ -141,7 +146,7 @@ async function loadEligibleMembers(conn, roomId, matchType, excludedIds = []) {
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
-       AND rm.presence_status = 'online'
+       ${includeOffline ? '' : "AND rm.presence_status = 'online'"}
        AND rm.current_match_id IS NULL
        AND u.is_blacklisted = 0`,
     [roomId]
@@ -150,19 +155,20 @@ async function loadEligibleMembers(conn, roomId, matchType, excludedIds = []) {
   const excluded = new Set(excludedIds.map(Number));
   return rows.filter((member) => {
     if (excluded.has(Number(member.user_id))) return false;
-    if (!PLAYABLE_STATUSES.has(member.play_status)) return false;
-    if (!acceptsMatchType(member, matchType)) return false;
+    if (!allowedStatuses.has(member.play_status)) return false;
+    if (requirePreferences && !acceptsMatchType(member, matchType)) return false;
     return true;
   });
 }
 
-async function loadEligibleMemberIds(conn, roomId) {
+async function loadEligibleMemberIds(conn, roomId, options = {}) {
+  const includeOffline = Boolean(options.includeOffline);
   const rows = await conn.query(
     `SELECT rm.user_id
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
-       AND rm.presence_status = 'online'
+       ${includeOffline ? '' : "AND rm.presence_status = 'online'"}
        AND rm.current_match_id IS NULL
        AND rm.play_status IN ('idle','waiting','resting')
        AND u.is_blacklisted = 0`,
@@ -272,16 +278,16 @@ function buildMixedDoubles(members, pairCounts) {
   return options;
 }
 
-async function selectBestMatch(conn, roomId, matchType, excludedIds = []) {
+function skillLevelSpread(players) {
+  if (!players.length) return 0;
+  const levels = players.map((member) => Number(member.skill_level || 0));
+  return Math.max(...levels) - Math.min(...levels);
+}
+
+function selectBestFromMembers(matchType, members, pairCounts, options = {}) {
   if (!MATCH_TYPES[matchType]) {
     throw new Error('不支持的匹配方式');
   }
-
-  const pairCounts = await loadTodayPairCounts(conn, roomId);
-  const members = restrictRestingFallback(
-    await loadEligibleMembers(conn, roomId, matchType, excludedIds),
-    matchType
-  );
 
   if (!canSatisfyNeeds(members, matchType)) {
     return null;
@@ -296,8 +302,48 @@ async function selectBestMatch(conn, roomId, matchType, excludedIds = []) {
     xs: () => buildMixedSingles(members, pairCounts)
   };
 
-  const options = builders[matchType]().sort((a, b) => a.score - b.score);
-  return options[0] || null;
+  const builtOptions = builders[matchType]()
+    .filter((option) => {
+      const requiredUserIds = options.requiredUserIds || [];
+      if (requiredUserIds.length) {
+        const playerIds = new Set([...option.red, ...option.blue].map((member) => Number(member.user_id)));
+        if (requiredUserIds.some((id) => !playerIds.has(Number(id)))) return false;
+      }
+      if (!Number.isFinite(Number(options.maxSkillSpread))) return true;
+      return skillLevelSpread([...option.red, ...option.blue]) <= Number(options.maxSkillSpread);
+    })
+    .sort((a, b) => a.score - b.score);
+  return builtOptions[0] || null;
+}
+
+async function selectBestMatch(conn, roomId, matchType, excludedIds = [], options = {}) {
+  if (!MATCH_TYPES[matchType]) {
+    throw new Error('涓嶆敮鎸佺殑鍖归厤鏂瑰紡');
+  }
+
+  const pairCounts = options.pairCounts || await loadTodayPairCounts(conn, roomId);
+  const loadedMembers = await loadEligibleMembers(conn, roomId, matchType, excludedIds, options);
+  const members = options.useRestingFallback === false
+    ? loadedMembers
+    : restrictRestingFallback(loadedMembers, matchType);
+  return selectBestFromMembers(matchType, members, pairCounts, options);
+}
+
+async function selectBestAnyMatch(conn, roomId, matchTypes, excludedIds = [], options = {}) {
+  const pairCounts = options.pairCounts || await loadTodayPairCounts(conn, roomId);
+  const choices = [];
+  for (const matchType of matchTypes) {
+    if (!MATCH_TYPES[matchType]) continue;
+    const teams = await selectBestMatch(conn, roomId, matchType, excludedIds, {
+      ...options,
+      pairCounts
+    });
+    if (teams) {
+      choices.push({ matchType, teams, score: Number(teams.score || 0) });
+    }
+  }
+  choices.sort((a, b) => a.score - b.score);
+  return choices[0] || null;
 }
 
 async function assertRoomActive(conn, roomId) {
@@ -335,6 +381,7 @@ async function createMatch(conn, { roomId, matchType, teams, createdBy, courtNo 
     `UPDATE room_members
      SET play_status = 'in_match',
          current_match_id = ?,
+         match_pool_joined_at = NULL,
          consecutive_play_count = consecutive_play_count + 1,
          rest_streak = 0
      WHERE room_id = ?
@@ -415,38 +462,414 @@ async function createFreeMatch({ roomId, matchType, createdBy }) {
   });
 }
 
+const FREE_POOL_CONFIRM_SECONDS = 15;
+const FREE_POOL_IGNORE_SKILL_SECONDS = 30;
+const FREE_POOL_IGNORE_PREFERENCE_SECONDS = 60;
+
+function matchTypesForMember(member) {
+  const preferences = parseMatchPreferences(member).filter((type) => MATCH_TYPES[type]);
+  if (!preferences.length || parseMatchPreferences(member).includes('any')) return ALL_MATCH_TYPE_KEYS;
+  return preferences;
+}
+
+async function expireStaleFreeProposals(conn, roomId) {
+  const rows = await conn.query(
+    `SELECT id
+     FROM free_match_proposals
+     WHERE room_id = ?
+       AND status = 'pending'
+       AND expires_at < NOW()
+     FOR UPDATE`,
+    [roomId]
+  );
+  if (!rows.length) return [];
+  const ids = rows.map((row) => Number(row.id));
+  await conn.query(
+    `UPDATE free_match_proposals
+     SET status = 'expired'
+     WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids
+  );
+  return ids;
+}
+
+async function nextFreePoolCourtNo(conn, roomId, courtCount) {
+  const totalCourts = Math.max(1, Number(courtCount || 1));
+  const rows = await conn.query(
+    `SELECT court_no
+     FROM matches
+     WHERE room_id = ?
+       AND status IN ('active','awaiting_result')
+     UNION ALL
+     SELECT court_no
+     FROM free_match_proposals
+     WHERE room_id = ?
+       AND status = 'pending'
+       AND expires_at >= NOW()`,
+    [roomId, roomId]
+  );
+  if (rows.length >= totalCourts) return null;
+  const occupied = new Set(
+    rows
+      .map((row) => Number(row.court_no))
+      .filter((courtNo) => courtNo >= 1 && courtNo <= totalCourts)
+  );
+  for (let courtNo = 1; courtNo <= totalCourts; courtNo += 1) {
+    if (!occupied.has(courtNo)) return courtNo;
+  }
+  return (rows.length % totalCourts) + 1;
+}
+
+async function loadFreePoolMembers(conn, roomId) {
+  return conn.query(
+    `SELECT
+       rm.room_id,
+       rm.user_id,
+       rm.play_status,
+       rm.match_preference,
+       rm.match_preferences,
+       rm.consecutive_play_count,
+       rm.rest_streak,
+       rm.match_pool_joined_at,
+       TIMESTAMPDIFF(SECOND, COALESCE(rm.match_pool_joined_at, rm.last_seen_at, NOW()), NOW()) AS pool_wait_seconds,
+       u.username,
+       u.display_name,
+       u.gender,
+       u.rating,
+       u.skill_level,
+       u.birth_year,
+       (
+         SELECT COUNT(*)
+         FROM match_players mp
+         JOIN matches m ON m.id = mp.match_id
+         WHERE mp.user_id = u.id
+           AND m.room_id = rm.room_id
+           AND DATE(m.started_at) = CURDATE()
+       ) AS matches_today
+     FROM room_members rm
+     JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = ?
+       AND rm.presence_status = 'online'
+       AND rm.play_status = 'waiting'
+       AND rm.current_match_id IS NULL
+       AND rm.match_pool_joined_at IS NOT NULL
+       AND u.is_blacklisted = 0
+       AND NOT EXISTS (
+         SELECT 1
+         FROM free_match_proposal_players fpp
+         JOIN free_match_proposals fmp ON fmp.id = fpp.proposal_id
+         WHERE fpp.user_id = rm.user_id
+           AND fmp.room_id = rm.room_id
+           AND fmp.status = 'pending'
+           AND fmp.expires_at >= NOW()
+       )
+     ORDER BY rm.match_pool_joined_at ASC, rm.joined_at ASC`,
+    [roomId]
+  );
+}
+
+function chooseFreePoolProposal(candidates, pairCounts) {
+  if (candidates.length < 2) return null;
+  const anchor = candidates[0];
+  const waitSeconds = Math.max(0, Number(anchor.pool_wait_seconds || 0));
+  const ignoreSkill = waitSeconds >= FREE_POOL_IGNORE_SKILL_SECONDS;
+  const ignorePreference = waitSeconds >= FREE_POOL_IGNORE_PREFERENCE_SECONDS;
+  const matchTypes = ignorePreference ? ALL_MATCH_TYPE_KEYS : matchTypesForMember(anchor);
+
+  for (const matchType of matchTypes) {
+    const pool = candidates.filter((member) => (
+      Number(member.user_id) === Number(anchor.user_id)
+      || ignorePreference
+      || acceptsMatchType(member, matchType)
+    ));
+    if (pool.length < MATCH_TYPES[matchType].total) continue;
+    const teams = selectBestFromMembers(matchType, pool, pairCounts, {
+      requiredUserIds: [anchor.user_id],
+      maxSkillSpread: ignoreSkill ? undefined : 2
+    });
+    if (teams) {
+      return {
+        matchType,
+        teams,
+        waitSeconds,
+        ignoredSkill: ignoreSkill,
+        ignoredPreference: ignorePreference
+      };
+    }
+  }
+
+  return null;
+}
+
+async function createFreeMatchProposal(conn, { roomId, matchType, teams, createdBy, courtNo, roundNo }) {
+  const result = await conn.query(
+    `INSERT INTO free_match_proposals
+       (room_id, match_type, court_no, round_no, created_by, expires_at)
+     VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+    [roomId, matchType, courtNo, roundNo, createdBy, FREE_POOL_CONFIRM_SECONDS]
+  );
+  const proposalId = Number(result.insertId);
+  const players = [
+    ...teams.red.map((member) => ({ ...member, team: 'red' })),
+    ...teams.blue.map((member) => ({ ...member, team: 'blue' }))
+  ];
+  for (const player of players) {
+    await conn.query(
+      `INSERT INTO free_match_proposal_players (proposal_id, user_id, team)
+       VALUES (?, ?, ?)`,
+      [proposalId, player.user_id, player.team]
+    );
+  }
+  return {
+    id: proposalId,
+    roomId,
+    matchType,
+    courtNo,
+    roundNo,
+    red: teams.red,
+    blue: teams.blue,
+    confirmSeconds: FREE_POOL_CONFIRM_SECONDS
+  };
+}
+
+async function evaluateFreeMatchPool(conn, roomId, createdBy) {
+  const room = await assertRoomActive(conn, roomId);
+  await expireStaleFreeProposals(conn, roomId);
+  const proposals = [];
+
+  while (true) {
+    const courtNo = await nextFreePoolCourtNo(conn, roomId, room.court_count);
+    if (!courtNo) {
+      return {
+        status: proposals.length ? 'proposal_created' : 'waiting_court',
+        proposals
+      };
+    }
+
+    const candidates = await loadFreePoolMembers(conn, roomId);
+    const pairCounts = await loadTodayPairCounts(conn, roomId);
+    const selected = chooseFreePoolProposal(candidates, pairCounts);
+    if (!selected) {
+      return {
+        status: proposals.length ? 'proposal_created' : 'waiting',
+        proposals
+      };
+    }
+
+    const roundNo = await nextRoundNo(conn, roomId, room.mode);
+    const proposal = await createFreeMatchProposal(conn, {
+      roomId,
+      matchType: selected.matchType,
+      teams: selected.teams,
+      createdBy,
+      courtNo,
+      roundNo
+    });
+    proposals.push({
+      ...proposal,
+      waitSeconds: selected.waitSeconds,
+      ignoredSkill: selected.ignoredSkill,
+      ignoredPreference: selected.ignoredPreference
+    });
+  }
+}
+
+async function joinFreeMatchPool({ roomId, userId }) {
+  return transaction(async (conn) => {
+    const room = await assertRoomActive(conn, roomId);
+    if (room.mode !== 'free') {
+      throw new Error('这个房间不是自由匹配模式');
+    }
+    const rows = await conn.query(
+      `SELECT *
+       FROM room_members
+       WHERE room_id = ?
+         AND user_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [roomId, userId]
+    );
+    const member = rows[0];
+    if (!member) throw new Error('你还没有加入这个房间');
+    if (['busy', 'in_match', 'awaiting_result', 'locked'].includes(member.play_status)) {
+      throw new Error('当前状态不能加入匹配池');
+    }
+    await expireStaleFreeProposals(conn, roomId);
+    await conn.query(
+      `UPDATE room_members
+       SET play_status = 'waiting',
+           presence_status = 'online',
+           match_pool_joined_at = COALESCE(match_pool_joined_at, NOW()),
+           last_seen_at = NOW()
+       WHERE room_id = ?
+         AND user_id = ?`,
+      [roomId, userId]
+    );
+    return evaluateFreeMatchPool(conn, roomId, userId);
+  });
+}
+
+async function leaveFreeMatchPool({ roomId, userId }) {
+  return transaction(async (conn) => {
+    await expireStaleFreeProposals(conn, roomId);
+    await conn.query(
+      `UPDATE room_members
+       SET play_status = 'idle',
+           match_pool_joined_at = NULL,
+           last_seen_at = NOW()
+       WHERE room_id = ?
+         AND user_id = ?
+         AND play_status = 'waiting'
+         AND current_match_id IS NULL`,
+      [roomId, userId]
+    );
+    return evaluateFreeMatchPool(conn, roomId, userId);
+  });
+}
+
+async function acceptFreeMatchProposal({ proposalId, userId }) {
+  return transaction(async (conn) => {
+    const proposalRows = await conn.query(
+      `SELECT
+         fmp.*,
+         r.court_count,
+         r.status AS room_status
+       FROM free_match_proposals fmp
+       JOIN rooms r ON r.id = fmp.room_id
+       WHERE fmp.id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [proposalId]
+    );
+    const proposal = proposalRows[0];
+    if (!proposal || proposal.room_status !== 'active') throw new Error('匹配提议不存在或房间已解散');
+    await expireStaleFreeProposals(conn, proposal.room_id);
+    const freshRows = await conn.query(
+      `SELECT status
+       FROM free_match_proposals
+       WHERE id = ?
+       LIMIT 1`,
+      [proposalId]
+    );
+    proposal.status = freshRows[0] ? freshRows[0].status : proposal.status;
+    if (proposal.status !== 'pending') throw new Error('这个匹配提议已经失效');
+
+    const playerRows = await conn.query(
+      `SELECT *
+       FROM free_match_proposal_players
+       WHERE proposal_id = ?
+         AND user_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [proposalId, userId]
+    );
+    if (!playerRows[0]) throw new Error('你不在这个匹配提议里');
+
+    await conn.query(
+      `UPDATE free_match_proposal_players
+       SET accepted_at = COALESCE(accepted_at, NOW())
+       WHERE proposal_id = ?
+         AND user_id = ?`,
+      [proposalId, userId]
+    );
+
+    const players = await conn.query(
+      `SELECT
+         fpp.user_id,
+         fpp.team,
+         fpp.accepted_at,
+         u.username,
+         u.display_name,
+         u.gender,
+         u.rating,
+         u.skill_level,
+         u.birth_year
+       FROM free_match_proposal_players fpp
+       JOIN users u ON u.id = fpp.user_id
+       WHERE fpp.proposal_id = ?
+       ORDER BY fpp.team, fpp.id`,
+      [proposalId]
+    );
+    const allAccepted = players.length > 0 && players.every((player) => player.accepted_at);
+    if (!allAccepted) {
+      return { status: 'accepted_waiting', proposalId, roomId: Number(proposal.room_id) };
+    }
+
+    const courtNo = await nextAvailableCourtNo(conn, proposal.room_id, proposal.court_count);
+    const teams = {
+      red: players.filter((player) => player.team === 'red'),
+      blue: players.filter((player) => player.team === 'blue')
+    };
+    const match = await createMatch(conn, {
+      roomId: Number(proposal.room_id),
+      matchType: proposal.match_type,
+      teams,
+      createdBy: proposal.created_by,
+      courtNo,
+      roundNo: proposal.round_no
+    });
+    await conn.query(
+      `UPDATE free_match_proposals
+       SET status = 'accepted',
+           accepted_match_id = ?
+       WHERE id = ?`,
+      [match.id, proposalId]
+    );
+    return { status: 'matched', proposalId, roomId: Number(proposal.room_id), match };
+  });
+}
+
 async function createRoundMatches({ roomId, courtModes, createdBy }) {
   return transaction(async (conn) => {
     const room = await assertRoomActive(conn, roomId);
-    const modes = courtModes.slice(0, Number(room.court_count)).filter((mode) => MATCH_TYPES[mode]);
+    const courtCount = Math.max(1, Number(room.court_count || 1));
+    const modes = Array.from({ length: courtCount }, (_, index) => {
+      const mode = courtModes[index] || 'any';
+      return mode === 'any' || MATCH_TYPES[mode] ? mode : 'any';
+    });
     if (modes.length === 0) {
       throw new Error('请至少选择一个场地的匹配方式');
     }
 
     const roundNo = await nextRoundNo(conn, roomId);
-    const roundEligibleIds = new Set(await loadEligibleMemberIds(conn, roomId));
+    const roundOptions = {
+      includeOffline: true,
+      requirePreferences: false,
+      useRestingFallback: false,
+      allowedStatuses: ROUND_PLAYABLE_STATUSES
+    };
+    const roundEligibleIds = new Set(await loadEligibleMemberIds(conn, roomId, { includeOffline: true }));
     const excludedIds = new Set();
     const matches = [];
     const skipped = [];
 
     for (let i = 0; i < modes.length; i += 1) {
-      const matchType = modes[i];
-      const best = await selectBestMatch(conn, roomId, matchType, [...excludedIds]);
-      if (!best) {
-        skipped.push({ courtNo: i + 1, matchType, label: MATCH_TYPES[matchType].label });
+      const mode = modes[i];
+      const selected = mode === 'any'
+        ? await selectBestAnyMatch(conn, roomId, ALL_MATCH_TYPE_KEYS, [...excludedIds], roundOptions)
+        : {
+          matchType: mode,
+          teams: await selectBestMatch(conn, roomId, mode, [...excludedIds], roundOptions)
+        };
+      if (!selected || !selected.teams) {
+        skipped.push({
+          courtNo: i + 1,
+          matchType: mode,
+          label: mode === 'any' ? '不限' : MATCH_TYPES[mode].label
+        });
         continue;
       }
 
       const created = await createMatch(conn, {
         roomId,
-        matchType,
-        teams: best,
+        matchType: selected.matchType,
+        teams: selected.teams,
         createdBy,
         courtNo: i + 1,
         roundNo
       });
       matches.push(created);
-      for (const player of [...best.red, ...best.blue]) {
+      for (const player of [...selected.teams.red, ...selected.teams.blue]) {
         excludedIds.add(Number(player.user_id));
       }
     }
@@ -473,7 +896,10 @@ async function createRoundMatches({ roomId, courtModes, createdBy }) {
 
 module.exports = {
   MATCH_TYPES,
+  acceptFreeMatchProposal,
   createFreeMatch,
   createRoundMatches,
+  joinFreeMatchPool,
+  leaveFreeMatchPool,
   selectBestMatch
 };

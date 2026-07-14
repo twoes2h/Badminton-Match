@@ -2,7 +2,13 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { query, transaction } = require('../db');
 const { asyncRoute, requireAuth } = require('../middleware');
-const { MATCH_TYPES, createFreeMatch, createRoundMatches } = require('../services/matching');
+const {
+  MATCH_TYPES,
+  acceptFreeMatchProposal,
+  createRoundMatches,
+  joinFreeMatchPool,
+  leaveFreeMatchPool
+} = require('../services/matching');
 const { markMatchAwaitingResult, submitMatchResult } = require('../services/results');
 const { sanitizeRoomMembers } = require('../services/privacy');
 const { emitRoomChanged } = require('../realtime');
@@ -28,14 +34,21 @@ function normalizeUserIds(value) {
   return [...new Set(values.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0))];
 }
 
-function normalizeMatchPreferences(value) {
+function allowedMatchPreferencesForGender(gender) {
+  if (gender === 'male') return new Set(['md', 'xd', 'ms', 'xs', 'any']);
+  if (gender === 'female') return new Set(['wd', 'xd', 'ws', 'xs', 'any']);
+  return MATCH_PREFS;
+}
+
+function normalizeMatchPreferences(value, gender = null) {
   const values = Array.isArray(value)
     ? value
     : typeof value === 'string'
       ? value.split(',')
       : [];
+  const allowedPrefs = allowedMatchPreferencesForGender(gender);
   const cleaned = [...new Set(values.map((item) => String(item).trim()).filter(Boolean))]
-    .filter((item) => MATCH_PREFS.has(item));
+    .filter((item) => MATCH_PREFS.has(item) && allowedPrefs.has(item));
 
   if (cleaned.length === 0 || cleaned.includes('any')) {
     return ['any'];
@@ -44,12 +57,12 @@ function normalizeMatchPreferences(value) {
   return cleaned.filter((item) => item !== 'any');
 }
 
-function preferencesToDb(value) {
-  return normalizeMatchPreferences(value).join(',');
+function preferencesToDb(value, gender = null) {
+  return normalizeMatchPreferences(value, gender).join(',');
 }
 
-function legacyPreference(value) {
-  return normalizeMatchPreferences(value)[0] || 'any';
+function legacyPreference(value, gender = null) {
+  return normalizeMatchPreferences(value, gender)[0] || 'any';
 }
 
 function normalizeMatchTypes(value) {
@@ -174,6 +187,7 @@ async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
              WHEN rm.current_match_id IS NULL THEN 'idle'
              ELSE 'awaiting_result'
            END,
+           rm.match_pool_joined_at = NULL,
            rm.current_match_id = CASE
              WHEN rm.current_match_id IS NULL THEN NULL
              ELSE rm.current_match_id
@@ -196,6 +210,17 @@ async function assertMember(conn, roomId, userId) {
   );
   if (!rows[0]) throw new Error('你还没有加入该房间');
   return rows[0];
+}
+
+async function touchRoomMember(conn, roomId, userId) {
+  await conn.query(
+    `UPDATE room_members
+     SET presence_status = 'online',
+         last_seen_at = NOW()
+     WHERE room_id = ?
+       AND user_id = ?`,
+    [roomId, userId]
+  );
 }
 
 async function assertActiveRoom(conn, roomId) {
@@ -270,6 +295,10 @@ async function assertMatchRequester(conn, room, user) {
   await assertMember(conn, room.id, user.id);
 }
 
+function isRoomManager(room, user) {
+  return Number(room.owner_user_id) === Number(user.id) || user.role === 'admin';
+}
+
 async function dissolveRoom(conn, roomId) {
   await conn.query("UPDATE rooms SET status = 'dissolved' WHERE id = ?", [roomId]);
   await conn.query(
@@ -284,6 +313,7 @@ async function dissolveRoom(conn, roomId) {
     `UPDATE room_members
      SET presence_status = 'offline',
          play_status = 'idle',
+         match_pool_joined_at = NULL,
          current_match_id = NULL
      WHERE room_id = ?`,
     [roomId]
@@ -385,6 +415,43 @@ async function getRoomPayload(roomId, userId, options = {}) {
     playersByMatch.set(Number(player.match_id), list);
   }
 
+  const freeProposals = room.mode === 'free'
+    ? await query(
+      `SELECT *
+       FROM free_match_proposals
+       WHERE room_id = ?
+         AND status = 'pending'
+         AND expires_at >= NOW()
+       ORDER BY created_at ASC
+       LIMIT 20`,
+      [roomId]
+    )
+    : [];
+  const proposalIds = freeProposals.map((proposal) => Number(proposal.id));
+  const proposalPlayers = proposalIds.length
+    ? await query(
+      `SELECT
+         fpp.*,
+         u.display_name,
+         u.avatar_url,
+         u.gender,
+         u.rating,
+         u.skill_level,
+         u.account_type
+       FROM free_match_proposal_players fpp
+       JOIN users u ON u.id = fpp.user_id
+       WHERE fpp.proposal_id IN (${proposalIds.map(() => '?').join(',')})
+       ORDER BY fpp.proposal_id, fpp.team, fpp.id`,
+      proposalIds
+    )
+    : [];
+  const playersByProposal = new Map();
+  for (const player of proposalPlayers) {
+    const list = playersByProposal.get(Number(player.proposal_id)) || [];
+    list.push(player);
+    playersByProposal.set(Number(player.proposal_id), list);
+  }
+
   return {
     room: { ...room, venue },
     venue,
@@ -394,6 +461,11 @@ async function getRoomPayload(roomId, userId, options = {}) {
       ...match,
       label: MATCH_TYPES[match.match_type] && MATCH_TYPES[match.match_type].label,
       players: playersByMatch.get(Number(match.id)) || []
+    })),
+    freeProposals: freeProposals.map((proposal) => ({
+      ...proposal,
+      label: MATCH_TYPES[proposal.match_type] && MATCH_TYPES[proposal.match_type].label,
+      players: playersByProposal.get(Number(proposal.id)) || []
     })),
     matchDate,
     matchTypes: MATCH_TYPES
@@ -632,6 +704,7 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
        ON DUPLICATE KEY UPDATE
          presence_status = 'online',
          last_seen_at = NOW(),
+         match_pool_joined_at = NULL,
          play_status = CASE
            WHEN play_status IN ('in_match','awaiting_result','locked') THEN play_status
            ELSE 'idle'
@@ -830,7 +903,16 @@ router.delete('/:roomId/members/:userId', requireAuth, asyncRoute(async (req, re
 }));
 
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
-  const payload = await getRoomPayload(Number(req.params.roomId), req.session.user.id, {
+  const roomId = Number(req.params.roomId);
+  await query(
+    `UPDATE room_members
+     SET presence_status = 'online',
+         last_seen_at = NOW()
+     WHERE room_id = ?
+       AND user_id = ?`,
+    [roomId, req.session.user.id]
+  );
+  const payload = await getRoomPayload(roomId, req.session.user.id, {
     matchDate: req.query.matchDate
   });
   res.json(payload);
@@ -849,7 +931,8 @@ router.post('/:roomId/leave', requireAuth, asyncRoute(async (req, res) => {
       await conn.query(
         `UPDATE room_members
          SET presence_status = 'offline',
-             play_status = 'awaiting_result'
+             play_status = 'awaiting_result',
+             match_pool_joined_at = NULL
          WHERE room_id = ?
            AND user_id = ?`,
         [roomId, req.session.user.id]
@@ -859,6 +942,7 @@ router.post('/:roomId/leave', requireAuth, asyncRoute(async (req, res) => {
         `UPDATE room_members
          SET presence_status = 'offline',
              play_status = 'idle',
+             match_pool_joined_at = NULL,
              current_match_id = NULL
          WHERE room_id = ?
            AND user_id = ?`,
@@ -896,9 +980,6 @@ router.patch('/:roomId/my-state', requireAuth, asyncRoute(async (req, res) => {
     : typeof rawPreferences === 'string'
       ? rawPreferences.split(',')
       : [];
-  const matchPreferences = hasPreferenceInput ? preferencesToDb(rawPreferences) : null;
-  const matchPreference = hasPreferenceInput ? legacyPreference(rawPreferences) : null;
-
   if (playStatus && !MEMBER_STATUSES.has(playStatus)) {
     return res.status(400).json({ error: '不支持的状态' });
   }
@@ -916,15 +997,34 @@ router.patch('/:roomId/my-state', requireAuth, asyncRoute(async (req, res) => {
       throw new Error('当前状态不能自行切换，请先完成比赛结果或联系管理员');
     }
 
+    const userRows = await conn.query('SELECT gender FROM users WHERE id = ? LIMIT 1', [req.session.user.id]);
+    const gender = userRows[0] && userRows[0].gender;
+    const matchPreferences = hasPreferenceInput ? preferencesToDb(rawPreferences, gender) : null;
+    const matchPreference = hasPreferenceInput ? legacyPreference(rawPreferences, gender) : null;
+
     await conn.query(
       `UPDATE room_members
        SET play_status = COALESCE(?, play_status),
            match_preference = COALESCE(?, match_preference),
            match_preferences = COALESCE(?, match_preferences),
+           match_pool_joined_at = CASE
+             WHEN ? = 'waiting' THEN COALESCE(match_pool_joined_at, NOW())
+             WHEN ? IS NULL THEN match_pool_joined_at
+             ELSE NULL
+           END,
+           presence_status = 'online',
            last_seen_at = NOW()
        WHERE room_id = ?
          AND user_id = ?`,
-      [playStatus || null, matchPreference, matchPreferences, roomId, req.session.user.id]
+      [
+        playStatus || null,
+        matchPreference,
+        matchPreferences,
+        playStatus || null,
+        playStatus || null,
+        roomId,
+        req.session.user.id
+      ]
     );
   });
 
@@ -934,7 +1034,7 @@ router.patch('/:roomId/my-state', requireAuth, asyncRoute(async (req, res) => {
 
 router.post('/:roomId/match/free', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
-  const matchTypes = normalizeMatchTypes(req.body.matchTypes ?? req.body.matchType);
+  const matchTypes = normalizeMatchTypes(req.body.matchTypes ?? req.body.matchType ?? 'any');
   if (matchTypes.length === 0) {
     return res.status(400).json({ error: '不支持的匹配方式' });
   }
@@ -946,9 +1046,16 @@ router.post('/:roomId/match/free', requireAuth, asyncRoute(async (req, res) => {
     await assertVenueMatchStarted(conn, room);
     await assertMatchRequester(conn, room, req.session.user);
   });
-  const match = await createFreeMatch({ roomId, matchType: matchTypes, createdBy: req.session.user.id });
+  const result = await joinFreeMatchPool({ roomId, userId: req.session.user.id });
   await emitRoomChanged(req.app.get('io'), roomId);
-  res.status(201).json({ match });
+  res.status(201).json(result);
+}));
+
+router.post('/:roomId/match/free/leave', requireAuth, asyncRoute(async (req, res) => {
+  const roomId = Number(req.params.roomId);
+  const result = await leaveFreeMatchPool({ roomId, userId: req.session.user.id });
+  await emitRoomChanged(req.app.get('io'), roomId);
+  res.json(result);
 }));
 
 router.post('/:roomId/match/round', requireAuth, asyncRoute(async (req, res) => {
@@ -960,11 +1067,20 @@ router.post('/:roomId/match/round', requireAuth, asyncRoute(async (req, res) => 
       throw new Error('这个房间是自由匹配模式，不能发起固定场次匹配');
     }
     await assertVenueMatchStarted(conn, room);
-    await assertMatchRequester(conn, room, req.session.user);
+    if (!isRoomManager(room, req.session.user)) {
+      throw new Error('只有房主或管理员可以发起固定场次匹配');
+    }
   });
   const result = await createRoundMatches({ roomId, courtModes, createdBy: req.session.user.id });
   await emitRoomChanged(req.app.get('io'), roomId);
   res.status(201).json(result);
+}));
+
+router.post('/match-proposals/:proposalId/accept', requireAuth, asyncRoute(async (req, res) => {
+  const proposalId = Number(req.params.proposalId);
+  const result = await acceptFreeMatchProposal({ proposalId, userId: req.session.user.id });
+  await emitRoomChanged(req.app.get('io'), result.roomId);
+  res.json(result);
 }));
 
 router.post('/matches/:matchId/finish', requireAuth, asyncRoute(async (req, res) => {
@@ -996,7 +1112,7 @@ router.post('/matches/:matchId/finish', requireAuth, asyncRoute(async (req, res)
     const row = rows[0];
     if (!row) throw new Error('比赛不存在');
     const isAuthority = Number(row.owner_user_id) === Number(req.session.user.id) || row.requester_role === 'admin';
-    if (!row.player_user_id && (!isAuthority || Number(row.real_player_count) > 0)) {
+    if (!row.player_user_id && !isAuthority) {
       throw new Error('你不属于这场比赛');
     }
     await markMatchAwaitingResult(conn, matchId);
