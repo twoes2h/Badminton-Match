@@ -168,12 +168,13 @@ async function prepareAvatarFile(file) {
     loadImageFromFile(file),
     file.arrayBuffer()
   ]);
-  const isAnimatedGif = file.type === 'image/gif' && isAnimatedGifBuffer(bytes);
-  if (isAnimatedGif
+  const isGif = file.type === 'image/gif';
+  const isAnimatedGif = isGif && isAnimatedGifBuffer(bytes);
+  if (isGif
     && file.size <= AVATAR_ANIMATED_MAX_BYTES
     && image.naturalWidth <= AVATAR_CANVAS_SIZE
     && image.naturalHeight <= AVATAR_CANVAS_SIZE) {
-    return { dataUrl, mode: 'animated', cropImage: null };
+    return { dataUrl, mode: isAnimatedGif ? 'animated' : 'gif', cropImage: null };
   }
 
   return {

@@ -96,11 +96,11 @@ async function normalizeAvatarImage(image) {
       limitInputPixels: AVATAR_MAX_PIXELS,
       animated: image.mimeType === 'image/gif'
     }).metadata();
-    const isAnimatedGif = image.mimeType === 'image/gif' && Number(metadata.pages || 1) > 1;
-    if (isAnimatedGif
+    const shouldKeepGif = image.mimeType === 'image/gif'
       && image.buffer.length <= AVATAR_MAX_BYTES
       && Number(metadata.width || 0) <= AVATAR_OUTPUT_SIZE
-      && Number(metadata.height || 0) <= AVATAR_OUTPUT_SIZE) {
+      && Number(metadata.height || 0) <= AVATAR_OUTPUT_SIZE;
+    if (shouldKeepGif) {
       return {
         buffer: image.buffer,
         extension: 'gif',
