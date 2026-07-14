@@ -152,7 +152,18 @@ async function main() {
     }
     next();
   });
-  app.use(express.static(path.join(process.cwd(), 'public')));
+  app.use('/uploads/avatars', express.static(path.join(process.cwd(), 'public', 'uploads', 'avatars'), {
+    maxAge: '14d',
+    immutable: true
+  }));
+  app.use(express.static(path.join(process.cwd(), 'public'), {
+    maxAge: '1h',
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(`${path.sep}sw.js`) || /\.(?:html)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    }
+  }));
 
   attachRealtime(io, sessionMiddleware);
 

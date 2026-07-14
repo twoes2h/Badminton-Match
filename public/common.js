@@ -91,7 +91,7 @@ function avatarHtml(user, extraClass = '') {
   return `
     <div class="avatar ${gender} ${extraClass}">
       ${url
-        ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(label)}">`
+        ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async">`
         : avatarText(label)}
     </div>
   `;
@@ -196,3 +196,12 @@ function ratingBadgeHtml(rating) {
   const units = ratingLevelUnits(rating);
   return `<span class="rating-badge" title="比赛等级 ${units}">${ratingBadgeText(rating)}</span>`;
 }
+
+function registerAssetCacheWorker() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+registerAssetCacheWorker();
