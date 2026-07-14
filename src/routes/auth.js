@@ -14,8 +14,9 @@ const USERNAME_MAX_LENGTH = 20;
 const USERNAME_PATTERN = new RegExp(`^[a-zA-Z0-9_\\u4e00-\\u9fa5-]{3,${USERNAME_MAX_LENGTH}}$`);
 const AVATAR_UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'avatars');
 const AVATAR_PUBLIC_PREFIX = '/uploads/avatars';
-const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_OUTPUT_SIZE = 320;
+const AVATAR_GIF_PRESERVE_MAX_SIZE = 640;
 const AVATAR_MAX_PIXELS = 12 * 1000 * 1000;
 const AVATAR_TYPES = {
   'image/jpeg': 'jpg',
@@ -71,7 +72,7 @@ function parseAvatarImage(imageData) {
   const extension = AVATAR_TYPES[mimeType];
   const buffer = Buffer.from(match[2].replace(/\s/g, ''), 'base64');
   if (buffer.length === 0 || buffer.length > AVATAR_MAX_BYTES) {
-    throw new Error('头像文件需小于 2MB');
+    throw new Error('头像文件需小于 5MB');
   }
 
   const valid = (mimeType === 'image/jpeg' && buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
@@ -98,8 +99,8 @@ async function normalizeAvatarImage(image) {
     }).metadata();
     const shouldKeepGif = image.mimeType === 'image/gif'
       && image.buffer.length <= AVATAR_MAX_BYTES
-      && Number(metadata.width || 0) <= AVATAR_OUTPUT_SIZE
-      && Number(metadata.height || 0) <= AVATAR_OUTPUT_SIZE;
+      && Number(metadata.width || 0) <= AVATAR_GIF_PRESERVE_MAX_SIZE
+      && Number(metadata.height || 0) <= AVATAR_GIF_PRESERVE_MAX_SIZE;
     if (shouldKeepGif) {
       return {
         buffer: image.buffer,

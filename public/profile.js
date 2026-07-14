@@ -4,8 +4,9 @@ let selectedAvatarFileMode = 'none';
 let avatarCropImage = null;
 let avatarCropState = { x: 0, y: 0, zoom: 1, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
 const AVATAR_SOURCE_MAX_BYTES = 5 * 1024 * 1024;
-const AVATAR_ANIMATED_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_ANIMATED_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_CANVAS_SIZE = 320;
+const AVATAR_GIF_PRESERVE_MAX_SIZE = 640;
 
 (async () => {
   profileUser = await requireUser();
@@ -172,8 +173,8 @@ async function prepareAvatarFile(file) {
   const isAnimatedGif = isGif && isAnimatedGifBuffer(bytes);
   if (isGif
     && file.size <= AVATAR_ANIMATED_MAX_BYTES
-    && image.naturalWidth <= AVATAR_CANVAS_SIZE
-    && image.naturalHeight <= AVATAR_CANVAS_SIZE) {
+    && image.naturalWidth <= AVATAR_GIF_PRESERVE_MAX_SIZE
+    && image.naturalHeight <= AVATAR_GIF_PRESERVE_MAX_SIZE) {
     return { dataUrl, mode: isAnimatedGif ? 'animated' : 'gif', cropImage: null };
   }
 

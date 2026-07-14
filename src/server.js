@@ -132,7 +132,7 @@ async function main() {
   app.use(helmet({
     contentSecurityPolicy: false
   }));
-  app.use(express.json({ limit: '3mb' }));
+  app.use(express.json({ limit: '8mb' }));
   app.use(sessionMiddleware);
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
