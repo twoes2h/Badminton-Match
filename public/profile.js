@@ -1,5 +1,7 @@
 let profileUser = null;
 let selectedAvatarDataUrl = null;
+const AVATAR_SOURCE_MAX_BYTES = 5 * 1024 * 1024;
+const AVATAR_CANVAS_SIZE = 320;
 
 (async () => {
   profileUser = await requireUser();
@@ -108,16 +110,56 @@ function readAvatarFile(file) {
   if (!allowed.has(file.type)) {
     return Promise.reject(new Error('请选择 jpg、png 或 webp 图片'));
   }
-  if (file.size > 2 * 1024 * 1024) {
-    return Promise.reject(new Error('头像文件需小于 2MB'));
+  if (file.size > AVATAR_SOURCE_MAX_BYTES) {
+    return Promise.reject(new Error('头像原图需小于 5MB'));
   }
 
   return new Promise((resolve, reject) => {
+    const image = new Image();
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = () => {
+      image.onload = () => {
+        try {
+          resolve(resizeAvatarImage(image));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      image.onerror = () => reject(new Error('头像图片无法读取'));
+      image.src = reader.result;
+    };
     reader.onerror = () => reject(new Error('头像读取失败'));
     reader.readAsDataURL(file);
   });
+}
+
+function resizeAvatarImage(image) {
+  const canvas = document.createElement('canvas');
+  canvas.width = AVATAR_CANVAS_SIZE;
+  canvas.height = AVATAR_CANVAS_SIZE;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('浏览器无法处理头像图片');
+
+  const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+  if (!sourceSize) throw new Error('头像图片尺寸不正确');
+  const sourceX = Math.floor((image.naturalWidth - sourceSize) / 2);
+  const sourceY = Math.floor((image.naturalHeight - sourceSize) / 2);
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceSize,
+    sourceSize,
+    0,
+    0,
+    AVATAR_CANVAS_SIZE,
+    AVATAR_CANVAS_SIZE
+  );
+
+  return canvas.toDataURL('image/webp', 0.82);
 }
 
 async function uploadAvatar() {

@@ -15,6 +15,8 @@ const USERNAME_PATTERN = new RegExp(`^[a-zA-Z0-9_\\u4e00-\\u9fa5-]{3,${USERNAME_
 const AVATAR_UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'avatars');
 const AVATAR_PUBLIC_PREFIX = '/uploads/avatars';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AVATAR_OUTPUT_SIZE = 320;
+const AVATAR_MAX_PIXELS = 12 * 1000 * 1000;
 const AVATAR_TYPES = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -77,6 +79,41 @@ function parseAvatarImage(imageData) {
   if (!valid) throw new Error('头像文件内容不正确');
 
   return { buffer, extension, mimeType };
+}
+
+async function normalizeAvatarImage(image) {
+  let sharp;
+  try {
+    sharp = require('sharp');
+  } catch (error) {
+    throw new Error('头像处理组件不可用，请联系管理员安装 sharp');
+  }
+
+  try {
+    const output = await sharp(image.buffer, {
+      limitInputPixels: AVATAR_MAX_PIXELS,
+      animated: false
+    })
+      .rotate()
+      .resize(AVATAR_OUTPUT_SIZE, AVATAR_OUTPUT_SIZE, {
+        fit: 'cover',
+        position: sharp.strategy.attention
+      })
+      .webp({ quality: 82, effort: 4 })
+      .toBuffer({ resolveWithObject: true });
+
+    return {
+      buffer: output.data,
+      extension: 'webp',
+      mimeType: 'image/webp',
+      width: output.info.width,
+      height: output.info.height,
+      originalMimeType: image.mimeType,
+      originalSize: image.buffer.length
+    };
+  } catch (error) {
+    throw new Error('头像图片无法处理，请换一张较小的 jpg、png 或 webp 图片');
+  }
 }
 
 async function removeLocalAvatar(avatarUrl) {
@@ -256,7 +293,7 @@ router.get('/me', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 router.post('/avatar', requireAuth, asyncRoute(async (req, res) => {
-  const image = parseAvatarImage(req.body.imageData);
+  const image = await normalizeAvatarImage(parseAvatarImage(req.body.imageData));
   await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
 
   const fileName = `user-${req.session.user.id}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${image.extension}`;
@@ -282,7 +319,11 @@ router.post('/avatar', requireAuth, asyncRoute(async (req, res) => {
     userId: req.session.user.id,
     avatarUrl,
     mimeType: image.mimeType,
-    size: image.buffer.length
+    originalMimeType: image.originalMimeType,
+    originalSize: image.originalSize,
+    size: image.buffer.length,
+    width: image.width,
+    height: image.height
   });
   res.json({ avatarUrl, user: req.session.user });
 }));
@@ -365,6 +406,8 @@ router.post('/password', requireAuth, asyncRoute(async (req, res) => {
 router._test = {
   profileInput,
   parseAvatarImage,
+  normalizeAvatarImage,
+  AVATAR_OUTPUT_SIZE,
   USERNAME_MAX_LENGTH,
   USERNAME_PATTERN
 };
