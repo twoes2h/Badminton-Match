@@ -178,16 +178,36 @@ async function findStartedVenueRegistrationForUser(conn, userId) {
   return rows[0] || null;
 }
 
-async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
+async function findOwnedActiveRoom(conn, userId) {
+  const rows = await conn.query(
+    `SELECT id, name, code, owner_user_id
+     FROM rooms
+     WHERE owner_user_id = ?
+       AND status = 'active'
+       AND venue_id IS NULL
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+async function releaseActiveRoomMemberships(conn, userId, keepRoomId, options = {}) {
+  const includeOwnedRooms = options.includeOwnedRooms !== false;
+  const ownerFilter = includeOwnedRooms ? '' : 'AND r.owner_user_id <> ?';
+  const params = includeOwnedRooms
+    ? [userId, keepRoomId]
+    : [userId, keepRoomId, userId];
   const roomRows = await conn.query(
     `SELECT DISTINCT rm.room_id, rm.current_match_id
      FROM room_members rm
      JOIN rooms r ON r.id = rm.room_id
      WHERE rm.user_id = ?
        AND r.status = 'active'
-       AND r.owner_user_id <> ?
-       AND r.id <> ?`,
-    [userId, userId, keepRoomId]
+       AND r.id <> ?
+       AND rm.left_at IS NULL
+       ${ownerFilter}`,
+    params
   );
   const roomIds = [...new Set(roomRows.map((row) => Number(row.room_id)).filter(Boolean))];
   const matchIds = [...new Set(roomRows.map((row) => Number(row.current_match_id)).filter(Boolean))];
@@ -213,9 +233,10 @@ async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
            END
        WHERE rm.user_id = ?
          AND r.status = 'active'
-         AND r.owner_user_id <> ?
-         AND r.id <> ?`,
-      [userId, userId, keepRoomId]
+         AND r.id <> ?
+         AND rm.left_at IS NULL
+         ${ownerFilter}`,
+      params
     );
   }
 
@@ -756,11 +777,9 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
       if (usedRows[0]) throw new Error('这个场地已经创建了房间');
       await assertVenueUserAvailability(conn, { userIds: registeredUserIds, venue });
     } else {
-      const activeRoom = await findActiveRoomForUser(conn, req.session.user.id, {
-        ownerOnly: req.session.user.role === 'admin'
-      });
-      if (activeRoom) {
-        throw new Error(`你已经在房间 ${activeRoom.name} 中，请先离开或解散该房间`);
+      const ownedRoom = await findOwnedActiveRoom(conn, req.session.user.id);
+      if (ownedRoom) {
+        throw new Error(`你已经创建了房间 ${ownedRoom.name}，请先解散该房间`);
       }
     }
 
@@ -797,6 +816,8 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
       await registerVenueUsers(conn, result.insertId, registeredUserIds, req.session.user.id);
       changedRoomIds = await activateVenueRoomIfStarted(conn, result.insertId);
     } else {
+      const releasedRoomIds = await releaseActiveRoomMemberships(conn, req.session.user.id, result.insertId);
+      changedRoomIds = [result.insertId, ...releasedRoomIds];
       await conn.query(
         `INSERT INTO room_members
           (room_id, user_id, presence_status, play_status, last_seen_at)
@@ -834,7 +855,8 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
       [roomId, req.session.user.id]
     );
     if (isAdminGuest) {
-      return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
+      const releasedRoomIds = await releaseActiveRoomMemberships(conn, req.session.user.id, roomId);
+      return { room: found, changedRoomIds: [roomId, ...activatedRoomIds, ...releasedRoomIds] };
     }
 
     if (found.venue_id) {
@@ -843,19 +865,19 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
         [roomId, req.session.user.id]
       );
       if (!existingRows[0] && !registrationRows[0]) {
-        if (isAdmin) return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
+        if (isAdmin) {
+          const releasedRoomIds = await releaseActiveRoomMemberships(conn, req.session.user.id, roomId);
+          return { room: found, changedRoomIds: [roomId, ...activatedRoomIds, ...releasedRoomIds] };
+        }
         throw new Error('你不在这个场地房间的报名名单中');
       }
       if (!existingRows[0]) {
-        return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
-      }
-    } else {
-      const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
-      if (activeRoom && Number(activeRoom.id) !== roomId) {
-        throw new Error(`你已经在房间 ${activeRoom.name} 中，一个人只能同时进入一个房间`);
+        const releasedRoomIds = await releaseActiveRoomMemberships(conn, req.session.user.id, roomId);
+        return { room: found, changedRoomIds: [roomId, ...activatedRoomIds, ...releasedRoomIds] };
       }
     }
 
+    const releasedRoomIds = await releaseActiveRoomMemberships(conn, req.session.user.id, roomId);
     if (!found.venue_id) {
       const onlineRows = await conn.query(
         `SELECT COUNT(*) AS count_value
@@ -889,7 +911,7 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
          END`,
       [roomId, req.session.user.id, found.mode, found.mode]
     );
-    return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
+    return { room: found, changedRoomIds: [roomId, ...activatedRoomIds, ...releasedRoomIds] };
   });
 
   for (const changedRoomId of [...new Set([roomId, ...(result.changedRoomIds || [])])]) {
