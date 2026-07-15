@@ -161,6 +161,23 @@ async function findActiveRoomForUser(conn, userId, options = {}) {
   return rows[0] || null;
 }
 
+async function findStartedVenueRegistrationForUser(conn, userId) {
+  const rows = await conn.query(
+    `SELECT r.id, r.name, r.code, r.owner_user_id
+     FROM room_registrations rr
+     JOIN rooms r ON r.id = rr.room_id
+     JOIN venues v ON v.id = r.venue_id
+     WHERE rr.user_id = ?
+       AND r.status = 'active'
+       AND v.starts_at <= NOW()
+       AND v.ends_at > NOW()
+     ORDER BY v.starts_at DESC, r.created_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
 async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
   const roomRows = await conn.query(
     `SELECT DISTINCT rm.room_id, rm.current_match_id
@@ -236,17 +253,17 @@ async function assertVenueUserAvailability(conn, { userIds, venue, excludeRoomId
   if (!venue || userIds.length === 0) return;
   const rows = await conn.query(
     `SELECT
-       rm.user_id,
+       rr.user_id,
        u.display_name,
        r.name AS room_name
-     FROM room_members rm
-     JOIN rooms r ON r.id = rm.room_id
+     FROM room_registrations rr
+     JOIN rooms r ON r.id = rr.room_id
      JOIN venues v ON v.id = r.venue_id
-     JOIN users u ON u.id = rm.user_id
+     JOIN users u ON u.id = rr.user_id
      WHERE r.status = 'active'
        AND r.venue_id IS NOT NULL
        AND r.id <> ?
-       AND rm.user_id IN (${sqlPlaceholders(userIds)})
+       AND rr.user_id IN (${sqlPlaceholders(userIds)})
        AND v.starts_at < ?
        AND v.ends_at > ?
      LIMIT 6`,
@@ -258,22 +275,122 @@ async function assertVenueUserAvailability(conn, { userIds, venue, excludeRoomId
   }
 }
 
-async function registerVenueMembers(conn, roomId, userIds) {
+async function registerVenueUsers(conn, roomId, userIds, createdBy) {
   if (userIds.length === 0) return;
   for (const userId of userIds) {
     await conn.query(
-      `INSERT INTO room_members
-        (room_id, user_id, presence_status, play_status, last_seen_at)
-       VALUES (?, ?, 'offline', 'idle', NULL)
+      `INSERT INTO room_registrations (room_id, user_id, created_by)
+       VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE
-         left_at = NULL,
-         play_status = CASE
-           WHEN play_status IN ('in_match','awaiting_result','locked') THEN play_status
-           ELSE play_status
-         END`,
-      [roomId, userId]
+         created_by = VALUES(created_by)`,
+      [roomId, userId, createdBy]
     );
   }
+}
+
+async function activateVenueRoomIfStarted(conn, roomId) {
+  const roomRows = await conn.query(
+    `SELECT
+       r.*,
+       v.starts_at,
+       CASE WHEN v.starts_at <= NOW() THEN 1 ELSE 0 END AS venue_started
+     FROM rooms r
+     JOIN venues v ON v.id = r.venue_id
+     WHERE r.id = ?
+       AND r.status = 'active'
+     LIMIT 1
+     FOR UPDATE`,
+    [roomId]
+  );
+  const room = roomRows[0];
+  if (!room || !room.venue_id || Number(room.venue_started) !== 1) return [];
+
+  const registrations = await conn.query(
+    `SELECT rr.user_id
+     FROM room_registrations rr
+     JOIN users u ON u.id = rr.user_id
+     WHERE rr.room_id = ?
+       AND u.is_blacklisted = 0
+     FOR UPDATE`,
+    [roomId]
+  );
+  const userIds = registrations.map((row) => Number(row.user_id)).filter(Boolean);
+  if (!userIds.length) return [];
+
+  const otherRows = await conn.query(
+    `SELECT DISTINCT rm.room_id, rm.current_match_id
+     FROM room_members rm
+     JOIN rooms r ON r.id = rm.room_id
+     WHERE rm.room_id <> ?
+       AND rm.user_id IN (${sqlPlaceholders(userIds)})
+       AND r.status = 'active'
+       AND rm.left_at IS NULL`,
+    [roomId, ...userIds]
+  );
+  const otherRoomIds = [...new Set(otherRows.map((row) => Number(row.room_id)).filter(Boolean))];
+  const matchIds = [...new Set(otherRows.map((row) => Number(row.current_match_id)).filter(Boolean))];
+
+  for (const matchId of matchIds) {
+    await markMatchAwaitingResult(conn, matchId);
+  }
+
+  if (otherRoomIds.length) {
+    await conn.query(
+      `UPDATE room_members rm
+       JOIN rooms r ON r.id = rm.room_id
+       SET rm.presence_status = 'offline',
+           rm.play_status = CASE
+             WHEN rm.current_match_id IS NULL THEN 'idle'
+             ELSE 'awaiting_result'
+           END,
+           rm.match_pool_joined_at = NULL,
+           rm.left_at = NOW()
+       WHERE rm.room_id <> ?
+         AND rm.user_id IN (${sqlPlaceholders(userIds)})
+         AND r.status = 'active'
+         AND rm.left_at IS NULL`,
+      [roomId, ...userIds]
+    );
+  }
+
+  await conn.query(
+    `INSERT INTO room_members
+       (room_id, user_id, presence_status, play_status, match_pool_joined_at, left_at, last_seen_at)
+     SELECT
+       ?,
+       rr.user_id,
+       CASE WHEN active.user_id IS NULL THEN 'offline' ELSE 'online' END,
+       'idle',
+       NULL,
+       NULL,
+       CASE WHEN active.user_id IS NULL THEN NULL ELSE NOW() END
+     FROM room_registrations rr
+     JOIN users u ON u.id = rr.user_id
+     LEFT JOIN (
+       SELECT DISTINCT user_id
+       FROM active_sessions
+     ) active ON active.user_id = rr.user_id
+     WHERE rr.room_id = ?
+       AND u.is_blacklisted = 0
+     ON DUPLICATE KEY UPDATE
+       presence_status = CASE
+         WHEN current_match_id IS NULL THEN VALUES(presence_status)
+         ELSE presence_status
+       END,
+       play_status = CASE
+         WHEN current_match_id IS NOT NULL OR play_status IN ('in_match','awaiting_result','locked') THEN play_status
+         ELSE 'idle'
+       END,
+       match_pool_joined_at = CASE
+         WHEN current_match_id IS NOT NULL OR play_status IN ('in_match','awaiting_result','locked') THEN match_pool_joined_at
+         ELSE NULL
+       END,
+       left_at = NULL,
+       last_seen_at = VALUES(last_seen_at)`,
+    [roomId, roomId]
+  );
+
+  return [...new Set([roomId, ...otherRoomIds])];
 }
 
 async function assertVenueMatchStarted(conn, room) {
@@ -364,10 +481,36 @@ async function getRoomPayload(roomId, userId, options = {}) {
      ORDER BY rm.presence_status DESC, rm.play_status, u.rating DESC`,
     [roomId]
   );
+  const registrations = room.venue_id
+    ? await query(
+      `SELECT
+         rr.id,
+         rr.room_id,
+         rr.user_id,
+         rr.created_at AS joined_at,
+         u.username,
+         u.display_name,
+         u.avatar_url,
+         u.gender,
+         u.birth_year,
+         u.rating,
+         u.skill_level,
+         u.role,
+         u.account_type,
+         u.temporary_expires_at,
+         u.is_blacklisted
+       FROM room_registrations rr
+       JOIN users u ON u.id = rr.user_id
+       WHERE rr.room_id = ?
+       ORDER BY rr.created_at ASC, u.display_name ASC`,
+      [roomId]
+    )
+    : [];
   const currentMember = members.find((member) => Number(member.user_id) === Number(userId)) || null;
+  const currentRegistration = registrations.find((registration) => Number(registration.user_id) === Number(userId)) || null;
   const canManageMembers = Number(room.owner_user_id) === Number(userId)
     || (await query('SELECT role FROM users WHERE id = ? LIMIT 1', [userId]))[0]?.role === 'admin';
-  if (room.venue_id && !currentMember && Number(room.owner_user_id) !== Number(userId)) {
+  if (room.venue_id && !currentMember && !currentRegistration && Number(room.owner_user_id) !== Number(userId)) {
     const requesterRows = await query('SELECT role FROM users WHERE id = ? LIMIT 1', [userId]);
     if (!requesterRows[0] || requesterRows[0].role !== 'admin') {
       throw new Error('你不在这个场地房间的报名名单中');
@@ -465,6 +608,7 @@ async function getRoomPayload(roomId, userId, options = {}) {
     venue,
     member: currentMember,
     members: sanitizeRoomMembers(members, { canManage: canManageMembers }),
+    registrations: sanitizeRoomMembers(registrations, { canManage: canManageMembers }),
     matches: matches.map((match) => ({
       ...match,
       label: MATCH_TYPES[match.match_type] && MATCH_TYPES[match.match_type].label,
@@ -489,13 +633,19 @@ router.get('/', requireAuth, asyncRoute(async (req, res) => {
       r.venue_id IS NULL
       OR EXISTS (
         SELECT 1
+        FROM room_registrations visible_rr
+       WHERE visible_rr.room_id = r.id
+         AND visible_rr.user_id = ?
+      )
+      OR EXISTS (
+        SELECT 1
         FROM room_members visible_rm
        WHERE visible_rm.room_id = r.id
          AND visible_rm.user_id = ?
          AND visible_rm.left_at IS NULL
       )
     )`;
-    params.push(req.session.user.id);
+    params.push(req.session.user.id, req.session.user.id);
   }
   if (term) {
     where += ' AND (r.code LIKE ? OR r.name LIKE ?)';
@@ -579,7 +729,7 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
   const password = String(req.body.password || '');
   const passwordHash = password ? await bcrypt.hash(password, 12) : null;
 
-  const room = await transaction(async (conn) => {
+  const created = await transaction(async (conn) => {
     let venue = null;
     if (venueId) {
       if (req.session.user.role !== 'admin') {
@@ -642,8 +792,10 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
     }
     if (!result) throw new Error('房间号生成失败，请重试');
 
+    let changedRoomIds = [result.insertId];
     if (venue) {
-      await registerVenueMembers(conn, result.insertId, registeredUserIds);
+      await registerVenueUsers(conn, result.insertId, registeredUserIds, req.session.user.id);
+      changedRoomIds = await activateVenueRoomIfStarted(conn, result.insertId);
     } else {
       await conn.query(
         `INSERT INTO room_members
@@ -653,10 +805,13 @@ router.post('/', requireAuth, asyncRoute(async (req, res) => {
       );
     }
     const rows = await conn.query('SELECT * FROM rooms WHERE id = ? LIMIT 1', [result.insertId]);
-    return rows[0];
+    return { room: rows[0], changedRoomIds };
   });
 
-  res.status(201).json({ room });
+  for (const changedRoomId of [...new Set(created.changedRoomIds || [])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
+  res.status(201).json({ room: created.room });
 }));
 
 router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
@@ -668,43 +823,51 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
     const isAdmin = req.session.user.role === 'admin';
     const isOwner = Number(found.owner_user_id) === Number(req.session.user.id);
     const isAdminGuest = isAdmin && !isOwner;
-    const isAdminVenueManager = isAdmin && found.venue_id;
 
     if (found.password_hash && !isAdmin && !(await bcrypt.compare(password, found.password_hash))) {
       throw new Error('房间密码错误');
     }
 
+    const activatedRoomIds = await activateVenueRoomIfStarted(conn, roomId);
     const existingRows = await conn.query(
       'SELECT * FROM room_members WHERE room_id = ? AND user_id = ? LIMIT 1',
       [roomId, req.session.user.id]
     );
-    if (isAdminVenueManager) {
-      const changedRoomIds = await releaseAdminGuestMemberships(conn, req.session.user.id, roomId);
-      return { room: found, changedRoomIds: [roomId, ...changedRoomIds] };
-    }
     if (isAdminGuest) {
-      const changedRoomIds = await releaseAdminGuestMemberships(conn, req.session.user.id, roomId);
-      return { room: found, changedRoomIds };
+      return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
     }
 
-    const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
-    if (activeRoom && Number(activeRoom.id) !== roomId) {
-      throw new Error(`你已经在房间 ${activeRoom.name} 中，一个人只能同时进入一个房间`);
+    if (found.venue_id) {
+      const registrationRows = await conn.query(
+        'SELECT 1 FROM room_registrations WHERE room_id = ? AND user_id = ? LIMIT 1',
+        [roomId, req.session.user.id]
+      );
+      if (!existingRows[0] && !registrationRows[0]) {
+        if (isAdmin) return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
+        throw new Error('你不在这个场地房间的报名名单中');
+      }
+      if (!existingRows[0]) {
+        return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
+      }
+    } else {
+      const activeRoom = await findActiveRoomForUser(conn, req.session.user.id);
+      if (activeRoom && Number(activeRoom.id) !== roomId) {
+        throw new Error(`你已经在房间 ${activeRoom.name} 中，一个人只能同时进入一个房间`);
+      }
     }
 
-    if (found.venue_id && !existingRows[0]) {
-      throw new Error('你不在这个场地房间的报名名单中');
-    }
-    const onlineRows = await conn.query(
-      `SELECT COUNT(*) AS count_value
-       FROM room_members
-       WHERE room_id = ?
-         AND presence_status = 'online'`,
-      [roomId]
-    );
-    const alreadyOnline = existingRows[0] && existingRows[0].presence_status === 'online';
-    if (!alreadyOnline && Number(onlineRows[0].count_value) >= Number(found.max_people)) {
-      throw new Error('房间在线人数已满');
+    if (!found.venue_id) {
+      const onlineRows = await conn.query(
+        `SELECT COUNT(*) AS count_value
+         FROM room_members
+         WHERE room_id = ?
+           AND presence_status = 'online'`,
+        [roomId]
+      );
+      const alreadyOnline = existingRows[0] && existingRows[0].presence_status === 'online';
+      if (!alreadyOnline && Number(onlineRows[0].count_value) >= Number(found.max_people)) {
+        throw new Error('房间在线人数已满');
+      }
     }
 
     await conn.query(
@@ -726,7 +889,7 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
          END`,
       [roomId, req.session.user.id, found.mode, found.mode]
     );
-    return { room: found, changedRoomIds: [roomId] };
+    return { room: found, changedRoomIds: [roomId, ...activatedRoomIds] };
   });
 
   for (const changedRoomId of [...new Set([roomId, ...(result.changedRoomIds || [])])]) {
@@ -820,7 +983,7 @@ router.post('/:roomId/registrations', requireAuth, asyncRoute(async (req, res) =
     return res.status(400).json({ error: '请选择报名成员' });
   }
 
-  await transaction(async (conn) => {
+  const changedRoomIds = await transaction(async (conn) => {
     const room = await assertActiveRoom(conn, roomId);
     if (!room.venue_id) throw new Error('只有场地房间需要报名名单');
     if (Number(room.owner_user_id) !== Number(req.session.user.id) && req.session.user.role !== 'admin') {
@@ -831,10 +994,13 @@ router.post('/:roomId/registrations', requireAuth, asyncRoute(async (req, res) =
     const venue = venueRows[0];
     if (!venue) throw new Error('场地不存在');
     await assertVenueUserAvailability(conn, { userIds, venue, excludeRoomId: roomId });
-    await registerVenueMembers(conn, roomId, userIds);
+    await registerVenueUsers(conn, roomId, userIds, req.session.user.id);
+    return activateVenueRoomIfStarted(conn, roomId);
   });
 
-  await emitRoomChanged(req.app.get('io'), roomId);
+  for (const changedRoomId of [...new Set([roomId, ...changedRoomIds])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
   res.status(201).json({ ok: true });
 }));
 
@@ -853,19 +1019,26 @@ router.delete('/:roomId/registrations/:userId', requireAuth, asyncRoute(async (r
        FROM room_members
        WHERE room_id = ?
          AND user_id = ?
-       LIMIT 1`,
+      LIMIT 1`,
       [roomId, userId]
     );
-    if (!rows[0]) return;
-    if (rows[0].current_match_id || ['in_match', 'awaiting_result', 'locked'].includes(rows[0].play_status)) {
+    if (rows[0] && (rows[0].current_match_id || ['in_match', 'awaiting_result', 'locked'].includes(rows[0].play_status))) {
       throw new Error('成员正在比赛或等待结果，不能移出报名名单');
     }
     await conn.query(
-      `DELETE FROM room_members
+      `DELETE FROM room_registrations
        WHERE room_id = ?
          AND user_id = ?`,
       [roomId, userId]
     );
+    if (rows[0]) {
+      await conn.query(
+        `DELETE FROM room_members
+         WHERE room_id = ?
+           AND user_id = ?`,
+        [roomId, userId]
+      );
+    }
   });
 
   await emitRoomChanged(req.app.get('io'), roomId);
@@ -914,6 +1087,14 @@ router.delete('/:roomId/members/:userId', requireAuth, asyncRoute(async (req, re
          AND user_id = ?`,
       [roomId, userId]
     );
+    if (room.venue_id) {
+      await conn.query(
+        `DELETE FROM room_registrations
+         WHERE room_id = ?
+           AND user_id = ?`,
+        [roomId, userId]
+      );
+    }
   });
 
   await emitRoomChanged(req.app.get('io'), roomId);
@@ -921,14 +1102,26 @@ router.delete('/:roomId/members/:userId', requireAuth, asyncRoute(async (req, re
 }));
 
 router.get('/current', requireAuth, asyncRoute(async (req, res) => {
-  const room = await transaction(async (conn) => {
-    return findActiveRoomForUser(conn, req.session.user.id);
+  const result = await transaction(async (conn) => {
+    const venueRoom = await findStartedVenueRegistrationForUser(conn, req.session.user.id);
+    if (venueRoom) {
+      const changedRoomIds = await activateVenueRoomIfStarted(conn, venueRoom.id);
+      return { room: venueRoom, changedRoomIds };
+    }
+    return { room: await findActiveRoomForUser(conn, req.session.user.id), changedRoomIds: [] };
   });
-  res.json({ room: room ? { id: Number(room.id), name: room.name, code: room.code } : null });
+  for (const changedRoomId of [...new Set(result.changedRoomIds || [])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
+  res.json({ room: result.room ? { id: Number(result.room.id), name: result.room.name, code: result.room.code } : null });
 }));
 
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
+  const changedRoomIds = await transaction(async (conn) => activateVenueRoomIfStarted(conn, roomId));
+  for (const changedRoomId of [...new Set(changedRoomIds || [])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
   await query(
     `UPDATE room_members
      SET presence_status = 'online',
@@ -1069,16 +1262,20 @@ router.post('/:roomId/match/free', requireAuth, asyncRoute(async (req, res) => {
   if (matchTypes.length === 0) {
     return res.status(400).json({ error: '不支持的匹配方式' });
   }
-  await transaction(async (conn) => {
+  const changedRoomIds = await transaction(async (conn) => {
+    const activatedRoomIds = await activateVenueRoomIfStarted(conn, roomId);
     const room = await assertActiveRoom(conn, roomId);
     if (room.mode !== 'free') {
       throw new Error('这个房间是固定场次模式，不能发起自由匹配');
     }
     await assertVenueMatchStarted(conn, room);
     await assertMatchRequester(conn, room, req.session.user);
+    return activatedRoomIds;
   });
   const result = await joinFreeMatchPool({ roomId, userId: req.session.user.id });
-  await emitRoomChanged(req.app.get('io'), roomId);
+  for (const changedRoomId of [...new Set([roomId, ...changedRoomIds])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
   res.status(201).json(result);
 }));
 
@@ -1092,7 +1289,8 @@ router.post('/:roomId/match/free/leave', requireAuth, asyncRoute(async (req, res
 router.post('/:roomId/match/round', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
   const courtModes = Array.isArray(req.body.courtModes) ? req.body.courtModes : [];
-  await transaction(async (conn) => {
+  const changedRoomIds = await transaction(async (conn) => {
+    const activatedRoomIds = await activateVenueRoomIfStarted(conn, roomId);
     const room = await assertActiveRoom(conn, roomId);
     if (room.mode !== 'round') {
       throw new Error('这个房间是自由匹配模式，不能发起固定场次匹配');
@@ -1101,9 +1299,12 @@ router.post('/:roomId/match/round', requireAuth, asyncRoute(async (req, res) => 
     if (!isRoomManager(room, req.session.user)) {
       throw new Error('只有房主或管理员可以发起固定场次匹配');
     }
+    return activatedRoomIds;
   });
   const result = await createRoundMatches({ roomId, courtModes, createdBy: req.session.user.id });
-  await emitRoomChanged(req.app.get('io'), roomId);
+  for (const changedRoomId of [...new Set([roomId, ...changedRoomIds])]) {
+    await emitRoomChanged(req.app.get('io'), changedRoomId);
+  }
   res.status(201).json(result);
 }));
 

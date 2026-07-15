@@ -752,6 +752,36 @@ h3 {
   white-space: nowrap;
 }
 
+.registration-roster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 8px;
+}
+
+.registration-chip {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+
+.registration-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.registration-chip button {
+  min-height: 32px;
+  padding: 0 9px;
+}
+
 .match-filter {
   display: grid;
   grid-template-columns: 1fr auto;

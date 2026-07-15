@@ -299,10 +299,12 @@ function renderRoomRegistrationList() {
   const container = $('#roomRegistrationList');
   if (!container || !roomPayload || !roomPayload.room.venue_id || !canManageVenueRoster(roomPayload)) return;
 
+  renderRegisteredRoster();
   const memberIds = new Set(roomPayload.members.map((member) => Number(member.user_id)));
+  const registrationIds = new Set((roomPayload.registrations || []).map((registration) => Number(registration.user_id)));
   const keyword = $('#roomRegistrationSearch').value.trim().toLowerCase();
   const users = managementOptions.users.filter((user) => {
-    if (memberIds.has(Number(user.id))) return false;
+    if (memberIds.has(Number(user.id)) || registrationIds.has(Number(user.id))) return false;
     const text = `${user.display_name || ''} ${user.username || ''}`.toLowerCase();
     return !keyword || text.includes(keyword);
   });
@@ -327,6 +329,25 @@ function renderRoomRegistrationList() {
       if (checkbox.checked) selectedRoomRegistrationIds.add(userId);
       else selectedRoomRegistrationIds.delete(userId);
     });
+  });
+}
+
+function renderRegisteredRoster() {
+  const container = $('#registeredRosterList');
+  if (!container) return;
+  const registrations = roomPayload.registrations || [];
+  container.innerHTML = registrations.length
+    ? registrations.map((user) => `
+      <div class="registration-chip">
+        ${avatarHtml(user, 'small')}
+        <span>${escapeHtml(user.display_name)}</span>
+        <button type="button" class="secondary" data-remove-room-registration="${user.user_id}">移除</button>
+      </div>
+    `).join('')
+    : '<p class="muted">还没有报名成员。</p>';
+
+  $$('[data-remove-room-registration]').forEach((button) => {
+    button.addEventListener('click', () => removeRoomRegistration(button.dataset.removeRoomRegistration));
   });
 }
 
@@ -464,6 +485,16 @@ async function removeRoomMember(userId) {
   if (!window.confirm('确认把这个成员移出房间？不会删除他的用户和比赛记录。')) return;
   try {
     await api(`/api/rooms/${roomId}/members/${userId}`, { method: 'DELETE' });
+    await loadRoom();
+  } catch (error) {
+    showMessage(error.message);
+  }
+}
+
+async function removeRoomRegistration(userId) {
+  if (!window.confirm('确认把这个用户移出报名名单？')) return;
+  try {
+    await api(`/api/rooms/${roomId}/registrations/${userId}`, { method: 'DELETE' });
     await loadRoom();
   } catch (error) {
     showMessage(error.message);

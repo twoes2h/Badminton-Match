@@ -83,6 +83,20 @@ CREATE TABLE IF NOT EXISTS room_members (
   INDEX idx_room_members_match (current_match_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS room_registrations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  room_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  created_by BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_room_registration_user (room_id, user_id),
+  CONSTRAINT fk_room_registrations_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+  CONSTRAINT fk_room_registrations_user FOREIGN KEY (user_id) REFERENCES users(id),
+  CONSTRAINT fk_room_registrations_creator FOREIGN KEY (created_by) REFERENCES users(id),
+  INDEX idx_room_registrations_user (user_id),
+  INDEX idx_room_registrations_room (room_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS matches (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   room_id BIGINT UNSIGNED NOT NULL,

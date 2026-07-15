@@ -122,6 +122,38 @@ async function runMigrations() {
      AFTER joined_at`
   );
   await query(
+    `CREATE TABLE IF NOT EXISTS room_registrations (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+       room_id BIGINT UNSIGNED NOT NULL,
+       user_id BIGINT UNSIGNED NOT NULL,
+       created_by BIGINT UNSIGNED NOT NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       UNIQUE KEY uq_room_registration_user (room_id, user_id),
+       CONSTRAINT fk_room_registrations_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+       CONSTRAINT fk_room_registrations_user FOREIGN KEY (user_id) REFERENCES users(id),
+       CONSTRAINT fk_room_registrations_creator FOREIGN KEY (created_by) REFERENCES users(id),
+       INDEX idx_room_registrations_user (user_id),
+       INDEX idx_room_registrations_room (room_id)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+  await query(
+    `INSERT IGNORE INTO room_registrations (room_id, user_id, created_by, created_at)
+     SELECT rm.room_id, rm.user_id, r.owner_user_id, COALESCE(rm.joined_at, r.created_at)
+     FROM room_members rm
+     JOIN rooms r ON r.id = rm.room_id
+     WHERE r.venue_id IS NOT NULL`
+  );
+  await query(
+    `DELETE rm
+     FROM room_members rm
+     JOIN rooms r ON r.id = rm.room_id
+     JOIN venues v ON v.id = r.venue_id
+     WHERE r.status = 'active'
+       AND v.starts_at > NOW()
+       AND rm.current_match_id IS NULL
+       AND rm.play_status NOT IN ('in_match','awaiting_result','locked')`
+  );
+  await query(
     `UPDATE room_members
      SET match_preferences = match_preference
      WHERE match_preferences IN ('', 'any')
@@ -210,6 +242,14 @@ async function cleanupExpiredTemporaryUsers() {
          AND rm.current_match_id IS NULL`
     );
     await conn.query(
+      `DELETE rr
+       FROM room_registrations rr
+       JOIN users u ON u.id = rr.user_id
+       WHERE u.account_type = 'temporary'
+         AND u.temporary_expires_at IS NOT NULL
+         AND u.temporary_expires_at < NOW()`
+    );
+    await conn.query(
       `DELETE u
        FROM users u
        LEFT JOIN match_players mp ON mp.user_id = u.id
@@ -217,6 +257,7 @@ async function cleanupExpiredTemporaryUsers() {
        LEFT JOIN rating_events re ON re.user_id = u.id
        LEFT JOIN rooms r ON r.owner_user_id = u.id
        LEFT JOIN room_members rm ON rm.user_id = u.id
+       LEFT JOIN room_registrations rr ON rr.user_id = u.id
        WHERE u.account_type = 'temporary'
          AND u.temporary_expires_at IS NOT NULL
          AND u.temporary_expires_at < NOW()
@@ -224,7 +265,8 @@ async function cleanupExpiredTemporaryUsers() {
          AND mr.id IS NULL
          AND re.id IS NULL
          AND r.id IS NULL
-         AND rm.id IS NULL`
+         AND rm.id IS NULL
+         AND rr.id IS NULL`
     );
   });
 }
