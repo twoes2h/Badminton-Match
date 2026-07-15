@@ -132,6 +132,7 @@ async function loadEligibleMembers(conn, roomId, matchType, excludedIds = [], op
        u.username,
        u.display_name,
        u.gender,
+       u.account_type,
        u.rating,
        u.skill_level,
        u.birth_year,
@@ -146,6 +147,7 @@ async function loadEligibleMembers(conn, roomId, matchType, excludedIds = [], op
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
+       AND rm.left_at IS NULL
        ${includeOffline ? '' : "AND rm.presence_status = 'online'"}
        AND rm.current_match_id IS NULL
        AND u.is_blacklisted = 0`,
@@ -168,6 +170,7 @@ async function loadEligibleMemberIds(conn, roomId, options = {}) {
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
+       AND rm.left_at IS NULL
        ${includeOffline ? '' : "AND rm.presence_status = 'online'"}
        AND rm.current_match_id IS NULL
        AND rm.play_status IN ('idle','waiting','resting')
@@ -535,6 +538,7 @@ async function loadFreePoolMembers(conn, roomId) {
        u.username,
        u.display_name,
        u.gender,
+       u.account_type,
        u.rating,
        u.skill_level,
        u.birth_year,
@@ -549,9 +553,9 @@ async function loadFreePoolMembers(conn, roomId) {
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
-       AND rm.presence_status = 'online'
-       AND rm.play_status = 'waiting'
+       AND rm.left_at IS NULL
        AND rm.current_match_id IS NULL
+       AND rm.play_status NOT IN ('in_match','awaiting_result','locked')
        AND rm.match_pool_joined_at IS NOT NULL
        AND u.is_blacklisted = 0
        AND NOT EXISTS (
@@ -613,11 +617,32 @@ async function createFreeMatchProposal(conn, { roomId, matchType, teams, created
     ...teams.red.map((member) => ({ ...member, team: 'red' })),
     ...teams.blue.map((member) => ({ ...member, team: 'blue' }))
   ];
+  let allAccepted = players.length > 0;
   for (const player of players) {
+    const isTemporary = player.account_type === 'temporary';
+    allAccepted = allAccepted && isTemporary;
     await conn.query(
-      `INSERT INTO free_match_proposal_players (proposal_id, user_id, team)
-       VALUES (?, ?, ?)`,
-      [proposalId, player.user_id, player.team]
+      `INSERT INTO free_match_proposal_players (proposal_id, user_id, team, accepted_at)
+       VALUES (?, ?, ?, CASE WHEN ? = 'temporary' THEN NOW() ELSE NULL END)`,
+      [proposalId, player.user_id, player.team, player.account_type || 'normal']
+    );
+  }
+  let match = null;
+  if (allAccepted) {
+    match = await createMatch(conn, {
+      roomId,
+      matchType,
+      teams,
+      createdBy,
+      courtNo,
+      roundNo
+    });
+    await conn.query(
+      `UPDATE free_match_proposals
+       SET status = 'accepted',
+           accepted_match_id = ?
+       WHERE id = ?`,
+      [match.id, proposalId]
     );
   }
   return {
@@ -628,7 +653,9 @@ async function createFreeMatchProposal(conn, { roomId, matchType, teams, created
     roundNo,
     red: teams.red,
     blue: teams.blue,
-    confirmSeconds: FREE_POOL_CONFIRM_SECONDS
+    confirmSeconds: FREE_POOL_CONFIRM_SECONDS,
+    autoMatched: Boolean(match),
+    match
   };
 }
 
@@ -636,13 +663,15 @@ async function evaluateFreeMatchPool(conn, roomId, createdBy) {
   const room = await assertRoomActive(conn, roomId);
   await expireStaleFreeProposals(conn, roomId);
   const proposals = [];
+  const matches = [];
 
   while (true) {
     const courtNo = await nextFreePoolCourtNo(conn, roomId, room.court_count);
     if (!courtNo) {
       return {
-        status: proposals.length ? 'proposal_created' : 'waiting_court',
-        proposals
+        status: proposals.length ? 'proposal_created' : matches.length ? 'matched' : 'waiting_court',
+        proposals,
+        matches
       };
     }
 
@@ -651,8 +680,9 @@ async function evaluateFreeMatchPool(conn, roomId, createdBy) {
     const selected = chooseFreePoolProposal(candidates, pairCounts);
     if (!selected) {
       return {
-        status: proposals.length ? 'proposal_created' : 'waiting',
-        proposals
+        status: proposals.length ? 'proposal_created' : matches.length ? 'matched' : 'waiting',
+        proposals,
+        matches
       };
     }
 
@@ -665,12 +695,16 @@ async function evaluateFreeMatchPool(conn, roomId, createdBy) {
       courtNo,
       roundNo
     });
-    proposals.push({
-      ...proposal,
-      waitSeconds: selected.waitSeconds,
-      ignoredSkill: selected.ignoredSkill,
-      ignoredPreference: selected.ignoredPreference
-    });
+    if (proposal.autoMatched && proposal.match) {
+      matches.push(proposal.match);
+    } else {
+      proposals.push({
+        ...proposal,
+        waitSeconds: selected.waitSeconds,
+        ignoredSkill: selected.ignoredSkill,
+        ignoredPreference: selected.ignoredPreference
+      });
+    }
   }
 }
 
@@ -690,8 +724,8 @@ async function joinFreeMatchPool({ roomId, userId }) {
       [roomId, userId]
     );
     const member = rows[0];
-    if (!member) throw new Error('你还没有加入这个房间');
-    if (['busy', 'in_match', 'awaiting_result', 'locked'].includes(member.play_status)) {
+    if (!member || member.left_at) throw new Error('你还没有加入这个房间');
+    if (member.current_match_id || ['in_match', 'awaiting_result', 'locked'].includes(member.play_status)) {
       throw new Error('当前状态不能加入匹配池');
     }
     await expireStaleFreeProposals(conn, roomId);
@@ -719,7 +753,6 @@ async function leaveFreeMatchPool({ roomId, userId }) {
            last_seen_at = NOW()
        WHERE room_id = ?
          AND user_id = ?
-         AND play_status = 'waiting'
          AND current_match_id IS NULL`,
       [roomId, userId]
     );
@@ -899,6 +932,7 @@ module.exports = {
   acceptFreeMatchProposal,
   createFreeMatch,
   createRoundMatches,
+  evaluateFreeMatchPool,
   joinFreeMatchPool,
   leaveFreeMatchPool,
   selectBestMatch

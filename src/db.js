@@ -117,6 +117,11 @@ async function runMigrations() {
      AFTER match_preferences`
   );
   await query(
+    `ALTER TABLE room_members
+     ADD COLUMN IF NOT EXISTS left_at DATETIME NULL
+     AFTER joined_at`
+  );
+  await query(
     `UPDATE room_members
      SET match_preferences = match_preference
      WHERE match_preferences IN ('', 'any')

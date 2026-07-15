@@ -436,7 +436,16 @@ async function applyFinalResolution(conn, matchId, players, resolution) {
   await conn.query(
     `UPDATE room_members rm
      JOIN match_players mp ON mp.user_id = rm.user_id
-     SET rm.play_status = 'idle',
+     JOIN users u ON u.id = rm.user_id
+     JOIN rooms r ON r.id = rm.room_id
+     SET rm.play_status = CASE
+           WHEN r.mode = 'free' AND u.account_type = 'temporary' AND rm.left_at IS NULL THEN 'waiting'
+           ELSE 'idle'
+         END,
+         rm.match_pool_joined_at = CASE
+           WHEN r.mode = 'free' AND u.account_type = 'temporary' AND rm.left_at IS NULL THEN COALESCE(rm.match_pool_joined_at, NOW())
+           ELSE rm.match_pool_joined_at
+         END,
          rm.current_match_id = NULL
      WHERE mp.match_id = ?
        AND rm.room_id = ?`,

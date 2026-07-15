@@ -33,7 +33,7 @@
             <div class="card-title">
               <h2>我的状态</h2>
             </div>
-            <div class="segmented">
+            <div id="statusControls" class="segmented">
               <input id="stateIdle" type="radio" name="playStatus" value="idle">
               <label for="stateIdle">空闲</label>
               <input id="stateWaiting" type="radio" name="playStatus" value="waiting">
@@ -44,17 +44,17 @@
               <label for="stateBusy">忙碌</label>
             </div>
             <div>
-              <p class="meta">匹配偏好，可多选</p>
+              <p id="preferenceHint" class="meta">匹配偏好，可多选</p>
               <div id="preferenceChecks" class="check-grid"></div>
             </div>
-            <button type="submit">保存状态</button>
+            <button id="saveStateBtn" type="submit">保存状态</button>
           </form>
 
           <form id="freeMatchForm" class="card stack" data-mode-panel="free">
             <div class="card-title">
               <h2>自由匹配</h2>
             </div>
-            <p class="meta">使用“我的状态”里的匹配偏好加入匹配池。</p>
+            <p class="meta">按我的匹配偏好加入匹配池；不参与匹配时不会被安排比赛。</p>
             <div id="freeMatchChecks" class="check-grid hide"></div>
             <button type="submit">参与匹配</button>
           </form>

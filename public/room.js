@@ -1,4 +1,4 @@
-const roomId = Number(queryParam('id'));
+let roomId = Number(queryParam('id'));
 const MATCH_CHECK_KEYS = ['md', 'wd', 'xd', 'ms', 'ws', 'xs'];
 const COURT_MODE_KEYS = ['any', 'xd', 'md', 'wd', 'ms', 'ws', 'xs'];
 let pageUser = null;
@@ -12,8 +12,12 @@ let selectedRoomRegistrationIds = new Set();
   pageUser = await requireUser();
   if (!pageUser) return;
   if (!roomId) {
-    window.location.href = '/rooms.html';
-    return;
+    roomId = await resolveCurrentRoomId();
+    if (!roomId) {
+      window.location.href = '/rooms.html';
+      return;
+    }
+    window.history.replaceState(null, '', `/room.html?id=${roomId}`);
   }
 
   renderUserAction(pageUser);
@@ -22,6 +26,15 @@ let selectedRoomRegistrationIds = new Set();
   connectRoomSocket();
   await loadRoom();
 })();
+
+async function resolveCurrentRoomId() {
+  try {
+    const data = await api('/api/rooms/current');
+    return data.room && Number(data.room.id) ? Number(data.room.id) : null;
+  } catch {
+    return null;
+  }
+}
 
 function bindRoomPage() {
   $$('.tabs button').forEach((button) => {
@@ -88,9 +101,10 @@ function renderRoom(payload) {
 
   renderPreferenceChecks(member ? member.match_preferences || member.match_preference : 'any', member && member.gender);
   renderStatus(member);
+  renderStateForm(room, member);
   renderCourtModes(room.court_count);
   const freeSubmit = $('#freeMatchForm button[type="submit"]');
-  const isInFreePool = member && member.play_status === 'waiting' && member.match_pool_joined_at;
+  const isInFreePool = member && member.match_pool_joined_at;
   if (freeSubmit) freeSubmit.textContent = isInFreePool ? '退出匹配池' : '参与匹配';
   renderMembers(members);
   renderMatches(matches);
@@ -102,12 +116,21 @@ function renderRoom(payload) {
   });
   $('#roundMatchForm').classList.toggle('hide', room.mode !== 'round' || !canManageMembers);
   $('#freeMatchForm').classList.toggle('hide', room.mode !== 'free' || !member);
-  $('#stateForm').classList.toggle('hide', !member);
   $('#leaveRoomBtn').classList.toggle('hide', isOwner || !member);
   $('#dissolveRoomBtn').classList.toggle('hide', !isOwner && pageUser.role !== 'admin');
   $('#toggleTemporaryMemberBtn').classList.toggle('hide', !canManageMembers);
   if (!canManageMembers) $('#temporaryMemberForm').classList.add('hide');
   $('#registrationForm').classList.toggle('hide', !canManageMembers || !room.venue_id);
+}
+
+function renderStateForm(room, member) {
+  const isFreeRoom = room && room.mode === 'free';
+  $('#stateForm').classList.toggle('hide', !member);
+  $('#statusControls').classList.toggle('hide', !member || isFreeRoom);
+  $('#saveStateBtn').textContent = isFreeRoom ? '保存偏好' : '保存状态';
+  $('#preferenceHint').textContent = isFreeRoom
+    ? '自由匹配只使用匹配偏好；是否参赛由匹配池按钮控制。'
+    : '匹配偏好，可多选';
 }
 
 function renderVenueInfo(venue) {
@@ -310,7 +333,11 @@ function renderRoomRegistrationList() {
 function renderMembers(members) {
   const canManageMembers = roomPayload
     && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
-  $('#memberCount').textContent = `${members.filter((member) => member.presence_status === 'online').length}/${members.length}`;
+  const isFreeRoom = roomPayload && roomPayload.room && roomPayload.room.mode === 'free';
+  const activeCount = isFreeRoom
+    ? members.filter((member) => member.match_pool_joined_at || member.current_match_id).length
+    : members.filter((member) => member.presence_status === 'online').length;
+  $('#memberCount').textContent = `${activeCount}/${members.length}`;
   $('#memberList').innerHTML = members.map(renderMemberCard).join('');
 
   $$('[data-member-status]').forEach((select) => {
@@ -335,6 +362,7 @@ function renderMemberCard(member) {
   const canManageMembers = roomPayload
     && (Number(roomPayload.room.owner_user_id) === pageUser.id || pageUser.role === 'admin');
   const canRemoveMember = canRemoveRoomMember(member, canManageMembers);
+  const isFreeRoom = roomPayload && roomPayload.room && roomPayload.room.mode === 'free';
   const presence = member.presence_status === 'online' ? '在线' : '离线';
   const tags = [
     member.account_type === 'temporary' ? '临时' : '',
@@ -350,15 +378,31 @@ function renderMemberCard(member) {
           <strong>${escapeHtml(member.display_name)} ${ratingBadgeHtml(member.rating)}</strong>
           <p class="meta">偏好：${formatMatchPreferences(member.match_preferences || member.match_preference)}</p>
         </div>
-        <p class="member-card-info">等级 ${member.skill_level} · ${presence}${tags.length ? ` · ${tags.join(' · ')}` : ''}</p>
+        <p class="member-card-info">等级 ${member.skill_level} · ${isFreeRoom ? freeMemberPoolLabel(member) : presence}${tags.length ? ` · ${tags.join(' · ')}` : ''}</p>
         <p class="member-card-info">积分 ${member.rating} · ${GenderLabels[member.gender] || member.gender}</p>
         ${member.account_type === 'temporary' && member.username ? `<p class="member-username">用户名：${escapeHtml(member.username)}</p>` : ''}
         <div class="member-card-actions">
-          ${pageUser.role === 'admin' ? memberStatusSelect(member) : `<span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>`}
+          ${isFreeRoom
+            ? `<span class="member-status-pill ${freeMemberPoolClass(member)}">${freeMemberPoolLabel(member)}</span>`
+            : (pageUser.role === 'admin' ? memberStatusSelect(member) : `<span class="member-status-pill ${member.play_status}">${StatusLabels[member.play_status] || member.play_status}</span>`)}
         </div>
       </div>
     </article>
   `;
+}
+
+function freeMemberPoolLabel(member) {
+  if (member.current_match_id || member.play_status === 'in_match') return '比赛中';
+  if (member.play_status === 'awaiting_result') return '待结果';
+  if (member.match_pool_joined_at) return '匹配中';
+  return '未参与';
+}
+
+function freeMemberPoolClass(member) {
+  if (member.current_match_id || member.play_status === 'in_match') return 'active';
+  if (member.play_status === 'awaiting_result') return 'waiting';
+  if (member.match_pool_joined_at) return 'waiting';
+  return 'idle';
 }
 
 function canRemoveRoomMember(member, canManageMembers) {
@@ -699,15 +743,19 @@ function formatMatchResultText(match) {
 async function saveState(event) {
   event.preventDefault();
   const data = formObject(event.currentTarget);
+  const isFreeRoom = roomPayload && roomPayload.room && roomPayload.room.mode === 'free';
+  const body = {
+    matchPreferences: selectedPreferences()
+  };
+  if (!isFreeRoom) {
+    body.playStatus = data.playStatus;
+  }
   try {
     await api(`/api/rooms/${roomId}/my-state`, {
       method: 'PATCH',
-      body: {
-        playStatus: data.playStatus,
-        matchPreferences: selectedPreferences()
-      }
+      body
     });
-    showMessage('状态已保存');
+    showMessage(isFreeRoom ? '偏好已保存' : '状态已保存');
     await loadRoom();
   } catch (error) {
     showMessage(error.message);
@@ -718,13 +766,15 @@ async function createFreeMatch(event) {
   event.preventDefault();
   try {
     const member = roomPayload && roomPayload.member;
-    const isInPool = member && member.play_status === 'waiting' && member.match_pool_joined_at;
+    const isInPool = member && member.match_pool_joined_at;
     const poolData = await api(`/api/rooms/${roomId}/match/free${isInPool ? '/leave' : ''}`, {
       method: 'POST',
       body: {}
     });
     if (isInPool) {
       showMessage('已退出匹配池');
+    } else if (poolData.matches && poolData.matches.length) {
+      showMessage('匹配成功，比赛已开始');
     } else if (poolData.proposals && poolData.proposals.length) {
       showMessage('匹配成功，请等待所有人同意');
     } else if (poolData.status === 'waiting_court') {

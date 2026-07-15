@@ -6,6 +6,7 @@ const {
   MATCH_TYPES,
   acceptFreeMatchProposal,
   createRoundMatches,
+  evaluateFreeMatchPool,
   joinFreeMatchPool,
   leaveFreeMatchPool
 } = require('../services/matching');
@@ -147,11 +148,11 @@ async function findActiveRoomForUser(conn, userId, options = {}) {
      JOIN rooms r ON r.id = rm.room_id
      WHERE rm.user_id = ?
        AND r.status = 'active'
+       AND rm.left_at IS NULL
        ${ownerFilter}
        AND (
-         rm.presence_status = 'online'
-         OR rm.play_status IN ('in_match','awaiting_result','locked')
-         OR (r.owner_user_id = ? AND r.venue_id IS NULL)
+         r.owner_user_id = ?
+         OR rm.play_status IN ('idle','waiting','resting','busy','in_match','awaiting_result','locked')
        )
      ORDER BY r.created_at DESC
      LIMIT 1`,
@@ -188,6 +189,7 @@ async function releaseAdminGuestMemberships(conn, userId, keepRoomId) {
              ELSE 'awaiting_result'
            END,
            rm.match_pool_joined_at = NULL,
+           rm.left_at = NOW(),
            rm.current_match_id = CASE
              WHEN rm.current_match_id IS NULL THEN NULL
              ELSE rm.current_match_id
@@ -264,6 +266,7 @@ async function registerVenueMembers(conn, roomId, userIds) {
         (room_id, user_id, presence_status, play_status, last_seen_at)
        VALUES (?, ?, 'offline', 'idle', NULL)
        ON DUPLICATE KEY UPDATE
+         left_at = NULL,
          play_status = CASE
            WHEN play_status IN ('in_match','awaiting_result','locked') THEN play_status
            ELSE play_status
@@ -353,6 +356,11 @@ async function getRoomPayload(roomId, userId, options = {}) {
      FROM room_members rm
      JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = ?
+       AND (
+         rm.left_at IS NULL
+         OR rm.current_match_id IS NOT NULL
+         OR rm.play_status IN ('in_match','awaiting_result','locked')
+       )
      ORDER BY rm.presence_status DESC, rm.play_status, u.rating DESC`,
     [roomId]
   );
@@ -482,8 +490,9 @@ router.get('/', requireAuth, asyncRoute(async (req, res) => {
       OR EXISTS (
         SELECT 1
         FROM room_members visible_rm
-        WHERE visible_rm.room_id = r.id
-          AND visible_rm.user_id = ?
+       WHERE visible_rm.room_id = r.id
+         AND visible_rm.user_id = ?
+         AND visible_rm.left_at IS NULL
       )
     )`;
     params.push(req.session.user.id);
@@ -509,10 +518,11 @@ router.get('/', requireAuth, asyncRoute(async (req, res) => {
        v.starts_at AS venue_starts_at,
        v.ends_at AS venue_ends_at,
        v.location_url AS venue_location_url,
-       COUNT(CASE WHEN rm.presence_status = 'online' THEN 1 END) AS online_count
+       COUNT(CASE WHEN rm.presence_status = 'online' AND rm.left_at IS NULL THEN 1 END) AS online_count
      FROM rooms r
      LEFT JOIN venues v ON v.id = r.venue_id
      LEFT JOIN room_members rm ON rm.room_id = r.id
+      AND rm.left_at IS NULL
      ${where}
      GROUP BY r.id
      ORDER BY r.created_at DESC
@@ -704,12 +714,17 @@ router.post('/:roomId/join', requireAuth, asyncRoute(async (req, res) => {
        ON DUPLICATE KEY UPDATE
          presence_status = 'online',
          last_seen_at = NOW(),
-         match_pool_joined_at = NULL,
+         left_at = NULL,
+         match_pool_joined_at = CASE
+           WHEN ? = 'free' THEN match_pool_joined_at
+           ELSE NULL
+         END,
          play_status = CASE
            WHEN play_status IN ('in_match','awaiting_result','locked') THEN play_status
+           WHEN ? = 'free' THEN play_status
            ELSE 'idle'
          END`,
-      [roomId, req.session.user.id]
+      [roomId, req.session.user.id, found.mode, found.mode]
     );
     return { room: found, changedRoomIds: [roomId] };
   });
@@ -776,9 +791,9 @@ router.post('/:roomId/temporary-members', requireAuth, asyncRoute(async (req, re
 
     await conn.query(
       `INSERT INTO room_members
-        (room_id, user_id, presence_status, play_status, last_seen_at)
-       VALUES (?, ?, 'online', 'idle', NOW())`,
-      [roomId, result.insertId]
+        (room_id, user_id, presence_status, play_status, match_pool_joined_at, last_seen_at)
+       VALUES (?, ?, 'online', ?, CASE WHEN ? = 'free' THEN NOW() ELSE NULL END, NOW())`,
+      [roomId, result.insertId, room.mode === 'free' ? 'waiting' : 'idle', room.mode]
     );
     const rows = await conn.query(
       `SELECT id, username, display_name, gender, birth_year, rating, skill_level,
@@ -788,6 +803,9 @@ router.post('/:roomId/temporary-members', requireAuth, asyncRoute(async (req, re
        LIMIT 1`,
       [result.insertId]
     );
+    if (room.mode === 'free') {
+      await evaluateFreeMatchPool(conn, roomId, req.session.user.id);
+    }
     return rows[0];
   });
 
@@ -902,6 +920,13 @@ router.delete('/:roomId/members/:userId', requireAuth, asyncRoute(async (req, re
   res.json({ ok: true });
 }));
 
+router.get('/current', requireAuth, asyncRoute(async (req, res) => {
+  const room = await transaction(async (conn) => {
+    return findActiveRoomForUser(conn, req.session.user.id);
+  });
+  res.json({ room: room ? { id: Number(room.id), name: room.name, code: room.code } : null });
+}));
+
 router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
   const roomId = Number(req.params.roomId);
   await query(
@@ -909,7 +934,8 @@ router.get('/:roomId', requireAuth, asyncRoute(async (req, res) => {
      SET presence_status = 'online',
          last_seen_at = NOW()
      WHERE room_id = ?
-       AND user_id = ?`,
+       AND user_id = ?
+       AND left_at IS NULL`,
     [roomId, req.session.user.id]
   );
   const payload = await getRoomPayload(roomId, req.session.user.id, {
@@ -932,7 +958,8 @@ router.post('/:roomId/leave', requireAuth, asyncRoute(async (req, res) => {
         `UPDATE room_members
          SET presence_status = 'offline',
              play_status = 'awaiting_result',
-             match_pool_joined_at = NULL
+             match_pool_joined_at = NULL,
+             left_at = NOW()
          WHERE room_id = ?
            AND user_id = ?`,
         [roomId, req.session.user.id]
@@ -943,6 +970,7 @@ router.post('/:roomId/leave', requireAuth, asyncRoute(async (req, res) => {
          SET presence_status = 'offline',
              play_status = 'idle',
              match_pool_joined_at = NULL,
+             left_at = NOW(),
              current_match_id = NULL
          WHERE room_id = ?
            AND user_id = ?`,
@@ -993,6 +1021,9 @@ router.patch('/:roomId/my-state', requireAuth, asyncRoute(async (req, res) => {
   await transaction(async (conn) => {
     await assertActiveRoom(conn, roomId);
     const member = await assertMember(conn, roomId, req.session.user.id);
+    if (member.left_at) {
+      throw new Error('你还没有加入该房间');
+    }
     if (['in_match', 'awaiting_result', 'locked'].includes(member.play_status)) {
       throw new Error('当前状态不能自行切换，请先完成比赛结果或联系管理员');
     }

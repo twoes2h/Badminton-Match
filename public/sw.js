@@ -1,4 +1,4 @@
-const STATIC_CACHE = 'badminton-static-20260715a';
+const STATIC_CACHE = 'badminton-static-20260715b';
 const AVATAR_CACHE = 'badminton-avatars-20260715a';
 const AVATAR_MAX_ENTRIES = 80;
 const AVATAR_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;

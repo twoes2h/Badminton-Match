@@ -150,7 +150,7 @@ function renderUserAction(user) {
 function bottomNav(active, user) {
   const links = [
     { key: 'rooms', href: '/rooms.html', label: '房间' },
-    { key: 'room', href: queryParam('id') ? `/room.html?id=${queryParam('id')}` : '/rooms.html', label: '比赛' },
+    { key: 'room', href: queryParam('id') ? `/room.html?id=${queryParam('id')}` : '/room.html', label: '比赛' },
     { key: 'profile', href: '/profile.html', label: '我的' }
   ];
   if (user && user.role === 'admin') {

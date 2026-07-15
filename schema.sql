@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS room_members (
   consecutive_play_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   rest_streak SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  left_at DATETIME NULL,
   last_seen_at DATETIME NULL,
   UNIQUE KEY uq_room_user (room_id, user_id),
   CONSTRAINT fk_room_members_room FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
